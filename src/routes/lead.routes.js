@@ -26,14 +26,14 @@ router.post("/public", publicCreateLead);
 router.get(
     "/stats/dashboard",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager"),
     getLeadDashboard
 );
 
 router.get(
     "/stats/source-performance",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "marketing_manager"),
     getSourcePerformance
 );
 
@@ -41,77 +41,77 @@ router.get(
 router.get(
     "/",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager"),
     listLeads
 );
 
 router.post(
     "/",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     createLead
 );
 
 router.get(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     getLead
 );
 
 router.patch(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     updateLead
 );
 
 router.patch(
     "/:id/status",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     updateLeadStatus
 );
 
 router.patch(
     "/:id/assign",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager"),
+    restrictTo("admin", "sales_manager"),
     assignLead
 );
 
 router.patch(
     "/:id/follow-up",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     scheduleFollowUp
 );
 
 router.patch(
     "/:id/priority",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     updatePriority
 );
 
 router.patch(
     "/:id/won",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     markWon
 );
 
 router.patch(
     "/:id/lost",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     markLost
 );
 
 router.delete(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager"),
+    restrictTo("admin", "sales_manager"),
     deleteLead
 );
 

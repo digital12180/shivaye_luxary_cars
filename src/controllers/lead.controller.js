@@ -6,8 +6,8 @@ import { ok, fail } from "../utils/response.js";
 import LeadActivity from "../models/leadActivity.js";
 import Campaign from "../models/Campaign.js";
 import { sendNotification } from "../services/notification.service.js";
-import extractAttribution from "../services/attribution.service.js";
-import captureIpLocation from "../services/geolocation.service.js";
+import { extractAttribution } from "../services/attribution.service.js";
+import { captureLocation } from "../services/geolocation.service.js";
 
 /* ================= PUBLIC ================= */
 
@@ -202,7 +202,9 @@ export const publicCreateLead = async (req, res, next) => {
             201
         );
     } catch (err) {
-        next(err);
+        // next(err);
+        console.log("Error in publicCreateLead:", err);
+        return err;
     }
 };
 /* ============================================================
@@ -220,7 +222,7 @@ const bumpCampaignMetric = async (campaignId, field, delta = 1) => {
         console.error("Campaign metric bump failed:", err.message);
     }
 };
-/* ================= CRM ================= */                                                                                                                                                                  
+/* ================= CRM ================= */
 
 // GET /api/v1/leads
 export const listLeads = async (req, res, next) => {

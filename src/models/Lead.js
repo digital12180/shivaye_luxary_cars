@@ -185,7 +185,6 @@ leadSchema.index({ source: 1, createdAt: -1 });
 leadSchema.index({ leadType: 1, status: 1 });
 leadSchema.index({ customer: 1, status: 1 });
 
-// Text search (BRD 9.2)
 leadSchema.index({
     requirement: "text",
     notes: "text",
@@ -194,13 +193,13 @@ leadSchema.index({
 });
 
 // Soft delete
-leadSchema.pre(/^find/, function (next) {
+leadSchema.pre(/^find/, function () {
     this.where({ deletedAt: null });
-    next();
+    // next();
 });
 
 // Track stage changes + timestamps
-leadSchema.pre("save", function (next) {
+leadSchema.pre("save", function () {
     if (this.isModified("status")) {
         const prev = this.$__.priorDoc?.status;
         if (prev !== this.status) {
@@ -222,7 +221,7 @@ leadSchema.pre("save", function (next) {
             }
         }
     }
-    next();
+    // next();
 });
 
 export default mongoose.model("Lead", leadSchema);

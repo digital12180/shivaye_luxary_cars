@@ -9,7 +9,7 @@ import {
     refundPayment,
     getPaymentStats,
 } from "../controllers/payment.controller.js";
-import { verifyJWT, restrictTo } from "../middlewares/auth.middleware.js";
+import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 
 const router = Router();
 
@@ -28,7 +28,7 @@ router.post("/public/verify", verifyPayment);
 router.get(
     "/stats/summary",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "marketing_manager"),
     getPaymentStats
 );
 
@@ -36,21 +36,21 @@ router.get(
 router.get(
     "/",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     listPayments
 );
 
 router.get(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     getPayment
 );
 
 router.patch(
     "/:id/refund",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager"),
+    restrictTo("admin", "sales_manager"),
     refundPayment
 );
 

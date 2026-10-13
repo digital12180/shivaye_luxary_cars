@@ -73,12 +73,8 @@ const appointmentSchema = new mongoose.Schema(
     },
 
     durationMinutes: { type: Number, default: 30, min: 15 },
-
-    // Showroom / test-drive location
     location: { type: String, trim: true },
     showroomAddress: { type: String, trim: true },
-
-    // Source & attribution (BRD 11)
     source: {
       type: String,
       enum: [
@@ -151,11 +147,9 @@ appointmentSchema.index({ status: 1, scheduledAt: 1 });
 appointmentSchema.index({ assignedTo: 1, scheduledAt: 1 });
 appointmentSchema.index({ customer: 1, status: 1 });
 appointmentSchema.index({ vehicle: 1, scheduledAt: 1 });
-
-// Soft delete
 appointmentSchema.pre(/^find/, function (next) {
   this.where({ deletedAt: null });
-  next();
+  // next();
 });
 
 export default mongoose.model("Appointment", appointmentSchema);

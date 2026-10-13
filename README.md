@@ -189,3 +189,17 @@
 13	GET	/api/v1/analytics/campaigns	SuperAdmin, MktgMgr, SalesMGR
 
 `
+
+
+# 10. Client-Facing Summary (share this with Shivaye team)
+
+Razorpay                    	Merchant account + KYC + API keys + webhook secret
+Meta WhatsApp Business         	Business account + phone number ID + access token + approved templates
+SMS (MSG91)	                    DLT registration + sender ID + OTP template ID + auth key
+Email SMTP	                    Domain email credentials or SendGrid API key
+Cloudinary	                    Cloud name + API key + API secret (or AWS S3 creds)
+Google Analytics 4	            Measurement ID
+Google Ads	                    Developer token + OAuth + conversion action ID (if offline conversion upload needed)
+Meta Pixel / CAPI	            Pixel ID + access token
+IP geolocation	                ipapi / IPStack / IPInfo API key
+Domain & SSL	                Confirmed production domains for website, CRM, API

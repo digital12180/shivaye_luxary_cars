@@ -5,7 +5,8 @@ import { ok, fail } from "../utils/response.js";
 // Helper — generate next stock id
 const generateStockId = async () => {
     const count = await Vehicle.countDocuments();
-    return `SLC-${String(count + 1).padStart(5, "0")}`;
+    const id=`SLC-${String(count + 1).padStart(5, "0")}`;
+    return id;
 };
 
 // PUBLIC: GET /api/v1/vehicles

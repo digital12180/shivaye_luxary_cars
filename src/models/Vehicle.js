@@ -118,13 +118,13 @@ vehicleSchema.index({
 });
 
 // Soft delete filter
-vehicleSchema.pre(/^find/, function (next) {
+vehicleSchema.pre(/^find/, function () {
     this.where({ deletedAt: null });
-    next();
+    // next();
 });
 
 // Auto-generate slug if not provided
-vehicleSchema.pre("save", function (next) {
+vehicleSchema.pre("save", function () {
     if (!this.slug) {
         const base = `${this.brand}-${this.model}-${this.year}-${this._id}`
             .toLowerCase()
@@ -132,7 +132,7 @@ vehicleSchema.pre("save", function (next) {
             .replace(/^-+|-+$/g, "");
         this.slug = base;
     }
-    next();
+    // next();
 });
 
 export default mongoose.model("Vehicle", vehicleSchema);

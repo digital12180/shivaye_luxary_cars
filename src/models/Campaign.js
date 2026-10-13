@@ -32,11 +32,7 @@ const campaignSchema = new mongoose.Schema(
       default: "draft",
       index: true,
     },
-
-    // Platform-side identifiers (BRD 11.2)
     platformCampaignId: { type: String, default: null, trim: true },
-
-    // UTM block (BRD 11.2)
     utm: {
       source: { type: String, default: null, trim: true },
       medium: { type: String, default: null, trim: true },
@@ -45,7 +41,7 @@ const campaignSchema = new mongoose.Schema(
       content: { type: String, default: null, trim: true },
     },
 
-    // Content
+
     title: { type: String, trim: true },
     description: { type: String, trim: true },
     bannerImage: { type: String, default: null },
@@ -108,28 +104,28 @@ campaignSchema.index({ "utm.campaign": 1 });
 campaignSchema.index({ name: "text", title: "text", description: "text" });
 
 // Soft delete
-campaignSchema.pre(/^find/, function (next) {
+campaignSchema.pre(/^find/, function () {
   this.where({ deletedAt: null });
-  next();
+  // next();
 });
 
 // Auto slug
-campaignSchema.pre("save", function (next) {
+campaignSchema.pre("save", function () {
   if (!this.slug && this.name) {
     this.slug = `${this.name}-${this._id || Date.now()}`
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
   }
-  next();
+  // next();
 });
 
 // Validate date range
-campaignSchema.pre("validate", function (next) {
+campaignSchema.pre("validate", function () {
   if (this.startDate && this.endDate && this.startDate >= this.endDate) {
-    return next(new Error("endDate must be after startDate"));
+    throw new Error("endDate must be after startDate");
   }
-  next();
+  // next();
 });
 
 export default mongoose.model("Campaign", campaignSchema);

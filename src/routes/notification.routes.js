@@ -28,7 +28,7 @@ router.patch("/me/:id/read", verifyCustomerJWT, markMyNotificationRead);
 router.get(
     "/stats/summary",
     verifyJWT,
-    restrictTo("super_admin", "marketing_manager", "sales_manager"),
+    restrictTo("admin", "marketing_manager", "sales_manager"),
     getNotificationStats
 );
 
@@ -36,14 +36,14 @@ router.get(
 router.get(
     "/inbox",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager"),
     getMyInbox
 );
 
 router.patch(
     "/inbox/:id/read",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager"),
     markInboxNotificationRead
 );
 
@@ -51,49 +51,49 @@ router.patch(
 router.get(
     "/",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "marketing_manager"),
     listNotifications
 );
 
 router.post(
     "/",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "marketing_manager"),
     createNotification
 );
 
 router.post(
     "/bulk",
     verifyJWT,
-    restrictTo("super_admin", "marketing_manager"),
+    restrictTo("admin", "marketing_manager"),
     createBulkNotifications
 );
 
 router.get(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "marketing_manager"),
     getNotification
 );
 
 router.patch(
     "/:id/retry",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "marketing_manager"),
     retryNotification
 );
 
 router.patch(
     "/:id/cancel",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "marketing_manager"),
     cancelNotification
 );
 
 router.delete(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin"),
+    restrictTo("admin"),
     deleteNotification
 );
 

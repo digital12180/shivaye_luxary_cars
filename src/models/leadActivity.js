@@ -115,9 +115,9 @@ leadActivitySchema.index({ lead: 1, type: 1 });
 // Text search across title + description
 leadActivitySchema.index({ title: "text", description: "text" });
 
-leadActivitySchema.pre(/^find/, function (next) {
+leadActivitySchema.pre(/^find/, function () {
     this.where({ deletedAt: null });
-    next();
+    // next();
 });
 
 export default mongoose.model("LeadActivity", leadActivitySchema);

@@ -24,14 +24,14 @@ router.get("/public/:slug", getPublicCampaign);
 router.get(
     "/stats/summary",
     verifyJWT,
-    restrictTo("super_admin", "marketing_manager", "sales_manager"),
+    restrictTo("admin", "marketing_manager", "sales_manager"),
     getCampaignStats
 );
 
 router.get(
     "/:id/performance",
     verifyJWT,
-    restrictTo("super_admin", "marketing_manager", "sales_manager"),
+    restrictTo("admin", "marketing_manager", "sales_manager"),
     getCampaignPerformance
 );
 
@@ -39,49 +39,49 @@ router.get(
 router.get(
     "/",
     verifyJWT,
-    restrictTo("super_admin", "marketing_manager", "sales_manager"),
+    restrictTo("admin", "marketing_manager", "sales_manager"),
     listCampaigns
 );
 
 router.post(
     "/",
     verifyJWT,
-    restrictTo("super_admin", "marketing_manager"),
+    restrictTo("admin", "marketing_manager"),
     createCampaign
 );
 
 router.get(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin", "marketing_manager", "sales_manager"),
+    restrictTo("admin", "marketing_manager", "sales_manager"),
     getCampaign
 );
 
 router.patch(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin", "marketing_manager"),
+    restrictTo("admin", "marketing_manager"),
     updateCampaign
 );
 
 router.patch(
     "/:id/status",
     verifyJWT,
-    restrictTo("super_admin", "marketing_manager"),
+    restrictTo("admin", "marketing_manager"),
     updateCampaignStatus
 );
 
 router.patch(
     "/:id/vehicles",
     verifyJWT,
-    restrictTo("super_admin", "marketing_manager"),
+    restrictTo("admin", "marketing_manager"),
     updateSelectedVehicles
 );
 
 router.delete(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin", "marketing_manager"),
+    restrictTo("admin", "marketing_manager"),
     deleteCampaign
 );
 

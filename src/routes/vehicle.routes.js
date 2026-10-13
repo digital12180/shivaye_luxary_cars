@@ -28,62 +28,62 @@ router.get("/:id/similar", getSimilarVehicles);
 router.get(
     "/admin/all",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "inventory_manager", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "inventory_manager", "marketing_manager"),
     adminListVehicles
 );
 
 router.post(
     "/",
     verifyJWT,
-    restrictTo("super_admin", "inventory_manager"),
+    restrictTo("admin", "inventory_manager"),
     createVehicle
 );
 
 router.patch(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin", "inventory_manager"),
+    restrictTo("admin", "inventory_manager"),
     updateVehicle
 );
 
 router.patch(
     "/:id/status",
     verifyJWT,
-    restrictTo("super_admin", "inventory_manager", "sales_manager"),
+    restrictTo("admin", "inventory_manager", "sales_manager"),
     updateStatus
 );
 
 router.patch(
     "/:id/sold",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager"),
+    restrictTo("admin", "sales_manager"),
     markAsSold
 );
 
 router.patch(
     "/:id/featured",
     verifyJWT,
-    restrictTo("super_admin", "inventory_manager", "marketing_manager"),
+    restrictTo("admin", "inventory_manager", "marketing_manager"),
     toggleFeatured
 );
 
 router.delete(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin", "inventory_manager"),
+    restrictTo("admin", "inventory_manager"),
     deleteVehicle
 );
 router.get(
     "/:id/sale",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     getVehicleSale
 );
 
 router.get(
     "/:id/history",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     getVehicleHistory
 );
 

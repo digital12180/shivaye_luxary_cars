@@ -111,14 +111,14 @@ customerSchema.index({ name: "text", phone: "text", email: "text" });
 // Soft delete filter
 customerSchema.pre(/^find/, function (next) {
     this.where({ deletedAt: null });
-    next();
+    // next();
 });
 
 // Hash password if present & modified
 customerSchema.pre("save", async function (next) {
-    if (!this.isModified("password") || !this.password) return next();
+    if (!this.isModified("password") || !this.password) return;
     this.password = await bcrypt.hash(this.password, 12);
-    next();
+    // next();
 });
 
 customerSchema.methods.comparePassword = function (candidate) {

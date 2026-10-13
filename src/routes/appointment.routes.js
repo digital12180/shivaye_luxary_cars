@@ -23,7 +23,7 @@ router.post("/public", publicCreateAppointment);
 router.get(
     "/stats/summary",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     getAppointmentStats
 );
 
@@ -31,63 +31,63 @@ router.get(
 router.get(
     "/",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     listAppointments
 );
 
 router.post(
     "/",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     createAppointment
 );
 
 router.get(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     getAppointment
 );
 
 router.patch(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     updateAppointment
 );
 
 router.patch(
     "/:id/assign",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager"),
+    restrictTo("admin", "sales_manager"),
     assignAppointment
 );
 
 router.patch(
     "/:id/status",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     updateAppointmentStatus
 );
 
 router.patch(
     "/:id/reschedule",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     rescheduleAppointment
 );
 
 router.patch(
     "/:id/feedback",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     submitFeedback
 );
 
 router.delete(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager"),
+    restrictTo("admin", "sales_manager"),
     deleteAppointment
 );
 

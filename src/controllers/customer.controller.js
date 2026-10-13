@@ -2,16 +2,14 @@ import mongoose from "mongoose";
 import Customer from "../models/Customer.js";
 import Vehicle from "../models/Vehicle.js";
 import { ok, fail } from "../utils/response.js";
-import extractAttribution from "../services/attribution.service.js";
-import captureIpLocation from "../services/geolocation.service.js";
+import {extractAttribution} from "../services/attribution.service.js";
+import { captureLocation } from "../services/geolocation.service.js";
 
-/* ================= PUBLIC / CUSTOMER PANEL ================= */
 
-// POST /api/v1/customers/public  (lead capture from website forms)
 export const publicCreateCustomer = async (req, res, next) => {
     try {
         const attribution = extractAttribution(req);
-        const {location } = await captureLocation(req);
+        const { location } = await captureLocation(req);
 
         const {
             name, email, phone, city, state,
@@ -20,10 +18,8 @@ export const publicCreateCustomer = async (req, res, next) => {
 
         if (!name || !phone) return fail(res, "Name and phone are required", 400);
 
-        // Duplicate check by phone (BRD 9.2)
         let customer = await Customer.findOne({ phone });
         if (customer) {
-            // Update latest touch and return existing
             if (attribution?.latestTouchSource)
                 customer.attribution.latestTouchSource = attribution.latestTouchSource;
             if (city && !customer.city) customer.city = city;
@@ -33,7 +29,6 @@ export const publicCreateCustomer = async (req, res, next) => {
             return ok(res, customer, "Existing customer found, updated");
         }
 
-        // IP-based location (BRD 12)
         const ip = req.ip || req.headers["x-forwarded-for"] || null;
 
         customer = await Customer.create({
@@ -49,7 +44,6 @@ export const publicCreateCustomer = async (req, res, next) => {
             ipAddress: ip,
             attribution: attribution || {},
             ipLocation: location || null,
-            // ipLocation populated separately by an IP geo service
         });
 
         return ok(res, customer, "Customer created", 201);
@@ -66,8 +60,7 @@ export const getMyProfile = async (req, res, next) => {
         if (!customer) return fail(res, "Customer not found", 404);
         return ok(res, customer);
     } catch (err) {
-        next(err);
-    }
+        next(err);  }
 };
 
 // PATCH /api/v1/customers/me

@@ -6,7 +6,7 @@ import { ok, fail } from "../utils/response.js";
    GET /api/v1/lead-activities
    Query: leadId, type, performedBy, fromDate, toDate, page, limit
    ============================================================ */
-export const listActivities = async (req, res, next) => {
+export const listActivities = async (req, res) => {
     try {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
@@ -45,14 +45,15 @@ export const listActivities = async (req, res, next) => {
             pagination: { total, page, limit, pages: Math.ceil(total / limit) },
         });
     } catch (err) {
-        next(err);
-    }
-};
+        // next(err);
+        console.log("Error in listActivities:", err);
+        return err;
+    }};
 
 /* ============================================================
    GET /api/v1/lead-activities/:id
    ============================================================ */
-export const getActivity = async (req, res, next) => {
+export const getActivity = async (req, res) => {
     try {
         const activity = await LeadActivity.findById(req.params.id)
             .populate("lead", "status source customer")
@@ -61,7 +62,9 @@ export const getActivity = async (req, res, next) => {
         if (!activity) return fail(res, "Activity not found", 404);
         return ok(res, activity);
     } catch (err) {
-        next(err);
+        // next(err);
+        console.log("Error in getActivity:", err);
+        return err;
     }
 };
 
@@ -145,7 +148,7 @@ export const createActivity = async (req, res, next) => {
 
 /* ============================================================
    PATCH /api/v1/lead-activities/:id
-   Only allow edits by the creator (or super_admin / sales_manager)
+   Only allow edits by the creator (or admin / sales_manager)
    ============================================================ */
 export const updateActivity = async (req, res, next) => {
     try {
@@ -153,7 +156,7 @@ export const updateActivity = async (req, res, next) => {
         if (!activity) return fail(res, "Activity not found", 404);
 
         const isOwner = String(activity.performedBy) === String(req.user._id);
-        const isPrivileged = ["super_admin", "sales_manager"].includes(req.user.role);
+        const isPrivileged = ["admin", "sales_manager"].includes(req.user.role);
         if (!isOwner && !isPrivileged)
             return fail(res, "Not authorized to edit this activity", 403);
 
@@ -179,7 +182,7 @@ export const deleteActivity = async (req, res, next) => {
         if (!activity) return fail(res, "Activity not found", 404);
 
         const isOwner = String(activity.performedBy) === String(req.user._id);
-        const isPrivileged = ["super_admin", "sales_manager"].includes(req.user.role);
+        const isPrivileged = ["admin", "sales_manager"].includes(req.user.role);
         if (!isOwner && !isPrivileged)
             return fail(res, "Not authorized", 403);
 

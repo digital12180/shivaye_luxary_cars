@@ -19,6 +19,7 @@ import { verifyCustomerJWT } from "../middleware/customerAuth.middleware.js";
 const router = Router();
 
 /* ============ PUBLIC ============ */
+
 router.post("/public", publicCreateCustomer);
 
 /* ============ CUSTOMER PANEL ============ */
@@ -31,49 +32,49 @@ router.delete("/me/saved-cars/:vehicleId", verifyCustomerJWT, removeSavedCar);
 router.get(
     "/stats/summary",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "marketing_manager"),
     getCustomerStats
 );
 
 router.get(
     "/",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager"),
     listCustomers
 );
 
 router.post(
     "/",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     createCustomer
 );
 
 router.get(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     getCustomer
 );
 
 router.patch(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager", "sales_executive"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     updateCustomer
 );
 
 router.patch(
     "/:id/status",
     verifyJWT,
-    restrictTo("super_admin", "sales_manager"),
+    restrictTo("admin", "sales_manager"),
     toggleCustomerStatus
 );
 
 router.delete(
     "/:id",
     verifyJWT,
-    restrictTo("super_admin"),
+    restrictTo("admin"),
     deleteCustomer
 );
 
