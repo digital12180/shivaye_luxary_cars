@@ -147,9 +147,8 @@ appointmentSchema.index({ status: 1, scheduledAt: 1 });
 appointmentSchema.index({ assignedTo: 1, scheduledAt: 1 });
 appointmentSchema.index({ customer: 1, status: 1 });
 appointmentSchema.index({ vehicle: 1, scheduledAt: 1 });
-appointmentSchema.pre(/^find/, function (next) {
+appointmentSchema.pre(/^find/, function () {
   this.where({ deletedAt: null });
-  // next();
 });
 
 export default mongoose.model("Appointment", appointmentSchema);

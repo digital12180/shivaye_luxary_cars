@@ -185,20 +185,18 @@ saleSchema.index(
 );
 
 /* Soft delete */
-saleSchema.pre(/^find/, function (next) {
+saleSchema.pre(/^find/, function () {
   this.where({ deletedAt: null });
-  next();
 });
 
 /* Auto-compute amountDue */
-saleSchema.pre("save", function (next) {
+saleSchema.pre("save", function () {
   if (this.pricing) {
     this.pricing.amountDue = Math.max(
       0,
       (this.pricing.finalSalePrice || 0) - (this.pricing.amountPaid || 0)
     );
   }
-  next();
 });
 
 export default mongoose.model("Sale", saleSchema);

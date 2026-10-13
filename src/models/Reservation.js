@@ -194,15 +194,13 @@ reservationSchema.index(
 );
 
 /* Soft delete */
-reservationSchema.pre(/^find/, function (next) {
+reservationSchema.pre(/^find/, function () {
     this.where({ deletedAt: null });
-    next();
 });
 
 /* Auto amountDue */
-reservationSchema.pre("save", function (next) {
+reservationSchema.pre("save", function () {
     this.amountDue = Math.max(0, (this.reservationAmount || 0) - (this.amountPaid || 0));
-    next();
 });
 
 export default mongoose.model("Reservation", reservationSchema);

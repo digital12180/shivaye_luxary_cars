@@ -60,6 +60,13 @@ export const publicCreateReservation = async (req, res, next) => {
             termsAccepted,
             notes,
         } = req.body;
+        
+        console.log("Public reservation request:", {
+            name, phone, email, city,
+            vehicleId, leadId, source,
+            reservationType, termsAccepted, notes,
+            attribution,
+        });
 
         if (!name || !phone) return fail(res, "Name and phone are required", 400);
         if (!vehicleId) return fail(res, "Vehicle is required", 400);

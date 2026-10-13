@@ -106,7 +106,6 @@ campaignSchema.index({ name: "text", title: "text", description: "text" });
 // Soft delete
 campaignSchema.pre(/^find/, function () {
   this.where({ deletedAt: null });
-  // next();
 });
 
 // Auto slug
@@ -117,7 +116,6 @@ campaignSchema.pre("save", function () {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
   }
-  // next();
 });
 
 // Validate date range
@@ -125,7 +123,6 @@ campaignSchema.pre("validate", function () {
   if (this.startDate && this.endDate && this.startDate >= this.endDate) {
     throw new Error("endDate must be after startDate");
   }
-  // next();
 });
 
 export default mongoose.model("Campaign", campaignSchema);
