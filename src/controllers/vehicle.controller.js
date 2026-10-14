@@ -1,11 +1,12 @@
 import mongoose from "mongoose";
 import Vehicle from "../models/Vehicle.js";
 import { ok, fail } from "../utils/response.js";
+import { uploadMultipleToCloudinary, uploadToCloudinary, deleteMultipleFromCloudinary } from "../utils/cloudinary.js";
 
 // Helper — generate next stock id
 const generateStockId = async () => {
     const count = await Vehicle.countDocuments();
-    const id=`SLC-${String(count + 1).padStart(5, "0")}`;
+    const id = `SLC-${String(count + 1).padStart(5, "0")}`;
     return id;
 };
 
@@ -123,14 +124,44 @@ export const getSimilarVehicles = async (req, res, next) => {
     }
 };
 
-// ADMIN: POST /api/v1/vehicles
 export const createVehicle = async (req, res, next) => {
     try {
         const stockId = req.body.stockId || (await generateStockId());
 
+        // ---- 1. Upload images to Cloudinary ----
+        let imageUrls = [];
+        let imagePublicIds = [];
+
+        if (req.files?.images?.length) {
+            const uploaded = await uploadMultipleToCloudinary(req.files.images);
+            imageUrls = uploaded.map((f) => f.url);
+            imagePublicIds = uploaded.map((f) => f.public_id);
+        }
+
+        // ---- 2. Upload video (if any) ----
+        let videoUrl = null;
+        let videoPublicId = null;
+
+        if (req.files?.video?.length) {
+            const v = req.files.video[0];
+            const uploaded = await uploadToCloudinary(
+                v.buffer,
+                "video",
+                `${Date.now()}-${v.originalname}`
+            );
+            videoUrl = uploaded.url;
+            videoPublicId = uploaded.public_id;
+        }
+
+        // ---- 3. Create vehicle ----
         const vehicle = await Vehicle.create({
             ...req.body,
             stockId,
+            images: imageUrls,
+            video: videoUrl,
+            // store public_ids for later deletion
+            imagePublicIds,
+            videoPublicId,
             createdBy: req.user._id,
             updatedBy: req.user._id,
         });
@@ -144,17 +175,48 @@ export const createVehicle = async (req, res, next) => {
 // ADMIN: PATCH /api/v1/vehicles/:id
 export const updateVehicle = async (req, res, next) => {
     try {
-        // Prevent protected fields being overwritten directly
         const protectedFields = ["slug", "views", "soldTo", "soldPrice", "soldAt", "saleExecutive"];
         protectedFields.forEach((f) => delete req.body[f]);
 
-        const vehicle = await Vehicle.findByIdAndUpdate(
-            req.params.id,
-            { ...req.body, updatedBy: req.user._id },
-            { new: true, runValidators: true }
-        );
-
+        const vehicle = await Vehicle.findById(req.params.id);
         if (!vehicle) return fail(res, "Vehicle not found", 404);
+
+        // ---- Handle new image uploads ----
+        if (req.files?.images?.length) {
+            const uploaded = await uploadMultipleToCloudinary(req.files.images);
+
+            // Optionally delete old images from Cloudinary
+            if (vehicle.imagePublicIds?.length) {
+                await deleteMultipleFromCloudinary(vehicle.imagePublicIds, "image");
+            }
+
+            vehicle.images = uploaded.map((f) => f.url);
+            vehicle.imagePublicIds = uploaded.map((f) => f.public_id);
+        }
+
+        // ---- Handle new video ----
+        if (req.files?.video?.length) {
+            const v = req.files.video[0];
+
+            // delete old video
+            if (vehicle.videoPublicId) {
+                await deleteFromCloudinary(vehicle.videoPublicId, "video");
+            }
+
+            const uploaded = await uploadToCloudinary(
+                v.buffer,
+                "video",
+                `${Date.now()}-${v.originalname}`
+            );
+            vehicle.video = uploaded.url;
+            vehicle.videoPublicId = uploaded.public_id;
+        }
+
+        // ---- Apply other scalar fields ----
+        Object.assign(vehicle, req.body);
+        vehicle.updatedBy = req.user._id;
+        await vehicle.save();
+
         return ok(res, vehicle, "Vehicle updated");
     } catch (err) {
         next(err);
@@ -229,12 +291,21 @@ export const toggleFeatured = async (req, res, next) => {
 // ADMIN: DELETE /api/v1/vehicles/:id
 export const deleteVehicle = async (req, res, next) => {
     try {
-        const vehicle = await Vehicle.findByIdAndUpdate(
-            req.params.id,
-            { deletedAt: new Date(), status: "inactive", updatedBy: req.user._id },
-            { new: true }
-        );
+        const vehicle = await Vehicle.findById(req.params.id);
         if (!vehicle) return fail(res, "Vehicle not found", 404);
+
+        // 🧹 Clean up Cloudinary assets
+        if (vehicle.imagePublicIds?.length) {
+            await deleteMultipleFromCloudinary(vehicle.imagePublicIds, "image");
+        }
+        if (vehicle.videoPublicId) {
+            await deleteFromCloudinary(vehicle.videoPublicId, "video");
+        }
+
+        vehicle.deletedAt = new Date();
+        vehicle.status = "inactive";
+        vehicle.updatedBy = req.user._id;
+        await vehicle.save();
 
         return ok(res, {}, "Vehicle deleted");
     } catch (err) {

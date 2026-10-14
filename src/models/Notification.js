@@ -72,6 +72,7 @@ const notificationSchema = new mongoose.Schema(
             index: true,
         },
 
+        
         /* ============ Content ============ */
         title: { type: String, trim: true, required: true },
         body: { type: String, trim: true, required: true },
@@ -143,9 +144,8 @@ notificationSchema.index({ type: 1, createdAt: -1 });
 notificationSchema.index({ channel: 1, status: 1 });
 
 /* Soft delete */
-notificationSchema.pre(/^find/, function (next) {
+notificationSchema.pre(/^find/, function () {
     this.where({ deletedAt: null });
-    next();
 });
 
 export default mongoose.model("Notification", notificationSchema);

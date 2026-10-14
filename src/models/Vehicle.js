@@ -59,8 +59,10 @@ const vehicleSchema = new mongoose.Schema(
         description: { type: String, trim: true },
 
         features: [{ type: String, trim: true }],
-        images: [{ type: String }],
+        images: [{ type: String }],       // secure_urls (existing)
+        imagePublicIds: [{ type: String }], // NEW — for deletion
         video: { type: String, default: null },
+        videoPublicId: { type: String, default: null }, // NEW
 
         location: {
             city: { type: String, trim: true, index: true },

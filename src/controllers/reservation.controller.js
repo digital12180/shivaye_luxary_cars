@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import cron from "node-cron";
 import Reservation from "../models/Reservation.js";
 import Vehicle from "../models/Vehicle.js";
 import Customer from "../models/Customer.js";
@@ -8,8 +9,135 @@ import Payment from "../models/Payment.js";
 import Campaign from "../models/Campaign.js";
 import { ok, fail } from "../utils/response.js";
 import { sendNotification } from "../services/notification.service.js";
-import {extractAttribution} from "../services/attribution.service.js";
+import { extractAttribution } from "../services/attribution.service.js";
 
+
+export const expireStaleReservations = async () => {
+    const now = new Date();
+    const batchSize = 50;
+
+    // Find all reservations whose hold window has passed
+    // while still unpaid/pending.
+    const stale = await Reservation.find({
+        status: { $in: ["initiated", "pending"] },
+        paymentStatus: { $in: ["pending", "partial"] },
+        expiresAt: { $ne: null, $lt: now },
+        deletedAt: null,
+    }).limit(batchSize);
+
+    if (stale.length === 0) return { expired: 0 };
+
+    let expiredCount = 0;
+
+    for (const reservation of stale) {
+        try {
+            /* 1. Mark reservation as expired */
+            reservation.status = "expired";
+            reservation.cancelledAt = now;
+            reservation.cancelledBy = "system";
+            reservation.cancellationReason = "Hold period expired";
+            reservation.cancellationCategory = "expired";
+            await reservation.save();
+
+            /* 2. Release the vehicle back to available */
+            await Vehicle.findByIdAndUpdate(reservation.vehicle, {
+                status: "available",
+                reservedAt: null,
+            });
+
+            /* 3. Roll lead back to negotiation stage */
+            if (reservation.lead) {
+                const lead = await Lead.findById(reservation.lead);
+                if (lead && lead.status === "reserved") {
+                    lead.status = "negotiation";
+                    await lead.save();
+                }
+
+                await LeadActivity.create({
+                    lead: reservation.lead,
+                    customer: reservation.customer,
+                    type: "system",
+                    title: "Reservation expired",
+                    description: `Hold expired for reservation ${reservation.reservationNumber}`,
+                    meta: { reservationId: reservation._id, expiresAt: reservation.expiresAt },
+                });
+            }
+
+            /* 4. Notify customer via WhatsApp */
+            const customer = await Customer.findById(reservation.customer);
+            if (customer) {
+                try {
+                    await sendNotification({
+                        recipientType: "customer",
+                        customerId: customer._id,
+                        to: customer.phone,
+                        channel: "whatsapp",
+                        type: "reservation_expiring",
+                        title: "Reservation expired",
+                        body: `Hi ${customer.name}, your reservation ${reservation.reservationNumber} has expired because payment was not completed. The vehicle is now available to other customers. You can reserve again anytime.`,
+                        template: {
+                            name: "reservation_expired",
+                            language: "en",
+                            variables: {
+                                name: customer.name,
+                                reservationNumber: reservation.reservationNumber,
+                            },
+                        },
+                        relatedTo: {
+                            reservation: reservation._id,
+                            vehicle: reservation.vehicle,
+                        },
+                    });
+                } catch (notifyErr) {
+                    console.error(
+                        `Notification failed for reservation ${reservation.reservationNumber}:`,
+                        notifyErr.message
+                    );
+                }
+            }
+
+            expiredCount++;
+        } catch (err) {
+            console.error(
+                `Failed to expire reservation ${reservation._id}:`,
+                err.message
+            );
+        }
+    }
+
+    if (expiredCount > 0) {
+        console.log(
+            `[Cron] Expired ${expiredCount} stale reservation(s) at ${now.toISOString()}`
+        );
+    }
+
+    return { expired: expiredCount };
+};
+
+export const startReservationExpiryJob = () => {
+    const schedule = process.env.CRON_RESERVATION_EXPIRY || "*/15 * * * *";
+
+    if (process.env.CRON_ENABLED === "false") {
+        console.log("[Cron] Reservation expiry job disabled (CRON_ENABLED=false)");
+        return;
+    }
+
+    cron.schedule(
+        schedule,
+        async () => {
+            try {
+                await expireStaleReservations();
+            } catch (err) {
+                console.error("[Cron] Reservation expiry job crashed:", err.message);
+            }
+        },
+        {
+            timezone: process.env.TZ || "Asia/Kolkata",
+        }
+    );
+
+    console.log(`[Cron] Reservation expiry job scheduled: ${schedule}`);
+};
 /* ============================================================
    Helper — generate reservation number
    ============================================================ */
@@ -60,7 +188,7 @@ export const publicCreateReservation = async (req, res, next) => {
             termsAccepted,
             notes,
         } = req.body;
-        
+
         console.log("Public reservation request:", {
             name, phone, email, city,
             vehicleId, leadId, source,
@@ -118,7 +246,8 @@ export const publicCreateReservation = async (req, res, next) => {
 
         /* 7. Create reservation */
         const { vehicleSnapshot, buyerSnapshot } = buildSnapshots(vehicle, customer);
-
+        const holdHours = Number(process.env.RESERVATION_HOLD_HOURS) || 72;
+        const expiresAt = new Date(Date.now() + holdHours * 60 * 60 * 1000);
         const reservation = await Reservation.create({
             reservationNumber: await generateReservationNumber(),
             customer: customer._id,
@@ -131,7 +260,7 @@ export const publicCreateReservation = async (req, res, next) => {
             amountDue: reservationAmount,
             paymentStatus: "pending",
             status: "pending",
-            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h hold
+            expiresAt,
             source: source || customer.source || "direct_website",
             termsAccepted: true,
             termsAcceptedAt: new Date(),
@@ -333,22 +462,26 @@ export const confirmReservation = async (req, res, next) => {
         reservation.updatedBy = req.user._id;
         await reservation.save();
 
-        await sendNotification({
-            recipientType: "customer",
-            customerId: reservation.customer,
-            to: customer.phone,
-            channel: "whatsapp",
-            type: "reservation_confirmed",
-            title: "Reservation confirmed",
-            body: `Your reservation ${reservation.reservationNumber} is confirmed. Thank you!`,
-            template: {
-                name: "reservation_confirmed",
-                language: "en",
-                variables: { reservationNumber: reservation.reservationNumber },
-            },
-            relatedTo: { reservation: reservation._id, vehicle: reservation.vehicle },
-            actionUrl: `/customer/reservations/${reservation._id}`,
-        });
+        // ✅ Sahi version
+        const customer = await Customer.findById(reservation.customer);
+        if (customer) {
+            await sendNotification({
+                recipientType: "customer",
+                customerId: customer._id,
+                to: customer.phone,
+                channel: "whatsapp",
+                type: "reservation_confirmed",
+                title: "Reservation confirmed",
+                body: `Your reservation ${reservation.reservationNumber} is confirmed. Thank you!`,
+                template: {
+                    name: "reservation_confirmed",
+                    language: "en",
+                    variables: { reservationNumber: reservation.reservationNumber },
+                },
+                relatedTo: { reservation: reservation._id, vehicle: reservation.vehicle },
+                actionUrl: `/customer/reservations/${reservation._id}`,
+            });
+        }
         return ok(res, reservation, "Reservation confirmed");
     } catch (err) {
         next(err);
@@ -356,27 +489,35 @@ export const confirmReservation = async (req, res, next) => {
 };
 
 /* ============================================================
-   CRM — Extend reservation validity
+   CRM — Extend reservation validity (default 3 more days)
    PATCH /api/v1/reservations/:id/extend
-   Body: { expiresAt }
+   Body: { expiresAt? }  // optional — if not given, extends by 3 days
    ============================================================ */
 export const extendReservation = async (req, res, next) => {
     try {
-        const { expiresAt } = req.body;
-        if (!expiresAt) return fail(res, "expiresAt is required", 400);
-
         const reservation = await Reservation.findById(req.params.id);
         if (!reservation) return fail(res, "Reservation not found", 404);
         if (!["initiated", "pending", "confirmed"].includes(reservation.status))
             return fail(res, "Cannot extend this reservation", 400);
 
-        reservation.expiresAt = new Date(expiresAt);
+        let newExpiry;
+        if (req.body.expiresAt) {
+            newExpiry = new Date(req.body.expiresAt);
+            if (isNaN(newExpiry.getTime()))
+                return fail(res, "Invalid expiresAt", 400);
+        } else {
+            // Default: extend by RESERVATION_HOLD_HOURS from now
+            const holdHours = Number(process.env.RESERVATION_HOLD_HOURS) || 72;
+            newExpiry = new Date(Date.now() + holdHours * 60 * 60 * 1000);
+        }
+
+        reservation.expiresAt = newExpiry;
         reservation.extendedCount += 1;
         reservation.extendedAt = new Date();
         reservation.updatedBy = req.user._id;
         await reservation.save();
 
-        return ok(res, reservation, "Reservation extended");
+        return ok(res, reservation, `Reservation extended to ${newExpiry.toISOString()}`);
     } catch (err) {
         next(err);
     }

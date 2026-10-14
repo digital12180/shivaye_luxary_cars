@@ -15,6 +15,7 @@ import {
     getVehicleHistory,
 } from "../controllers/vehicle.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
+import { upload } from "../middleware/upload.middleware.js";
 
 const router = Router();
 
@@ -36,6 +37,10 @@ router.post(
     "/",
     verifyJWT,
     restrictTo("admin", "inventory_manager"),
+    upload.fields([
+        { name: "images", maxCount: 10 },
+        { name: "video", maxCount: 1 },
+    ]),
     createVehicle
 );
 
@@ -43,6 +48,10 @@ router.patch(
     "/:id",
     verifyJWT,
     restrictTo("admin", "inventory_manager"),
+    upload.fields([
+        { name: "images", maxCount: 10 },
+        { name: "video", maxCount: 1 },
+    ]),
     updateVehicle
 );
 

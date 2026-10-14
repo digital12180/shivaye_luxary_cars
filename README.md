@@ -203,3 +203,21 @@ Google Ads	                    Developer token + OAuth + conversion action ID (i
 Meta Pixel / CAPI	            Pixel ID + access token
 IP geolocation	                ipapi / IPStack / IPInfo API key
 Domain & SSL	                Confirmed production domains for website, CRM, API
+
+
+
+# PAYMENT ---
+
+What's Retained From Your Old Code (Important Fixes)
+Feature	Retained?
+Razorpay integration	Yes
+Signature verification	Yes
+Webhook handler with signature check	Yes
+Idempotency	Yes — via unique idempotencyKey on Payment, no Redis needed
+Session + transaction	Yes
+Amount validation vs Razorpay	Yes
+Retry logic with max attempts	Yes — MAX_PAYMENT_RETRIES
+Refund workflow	Yes — simplified for single-item
+Invoice numbering	Yes — SLC-REC-2025-00042
+Notifications on success/fail/refund	Yes — via utils/notify.js
+Cron helper for expiry	Yes — expireStaleReservations
