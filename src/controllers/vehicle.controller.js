@@ -502,3 +502,68 @@ export const getVehicleHistory = async (req, res, next) => {
         next(err);
     }
 };
+
+/* ============================================================
+   BRD 13 — Persistent WhatsApp + Click-to-Call CTA
+   PUBLIC: GET /api/v1/vehicles/:id/cta
+   ============================================================ */
+// controllers/vehicle.controller.js
+import { buildWhatsAppCTA, buildCallCTA, buildVehicleWhatsAppMessage } from "../services/notification.service.js";
+
+export const getVehicleCTA = async (req, res, next) => {
+    try {
+        const vehicle = await Vehicle.findById(req.params.id)
+            .select("brand model variant year price stockId");
+
+        if (!vehicle) return fail(res, "Vehicle not found", 404);
+
+        const dealerPhone = process.env.DEALER_PHONE;
+        const dealerWhatsApp = process.env.DEALER_WHATSAPP;
+
+        return ok(res, {
+            whatsapp: {
+                url: buildWhatsAppCTA(vehicle, dealerWhatsApp),
+                message: buildVehicleWhatsAppMessage(vehicle),
+                number: dealerWhatsApp,
+            },
+            call: {
+                url: buildCallCTA(dealerPhone),
+                number: dealerPhone,
+            },
+        });
+    } catch (err) {
+        next(err);
+    }
+};
+// export const getVehicleCTA = async (req, res, next) => {
+//     try {
+//         const { id } = req.params;
+//         if (!mongoose.isValidObjectId(id))
+//             return fail(res, "Invalid vehicle id", 400);
+
+//         const vehicle = await Vehicle.findById(id)
+//             .select("brand model variant year price stockId images location status");
+
+//         if (!vehicle) return fail(res, "Vehicle not found", 404);
+
+//         const dealerPhone = process.env.DEALER_PHONE || "+919876543210";
+//         const dealerWhatsApp = process.env.DEALER_WHATSAPP || dealerPhone;
+
+//         const { buildWhatsAppCTA, buildCallCTA, buildVehicleWhatsAppMessage } =
+//             await import("../services/notification.service.js");
+
+//         return ok(res, {
+//             whatsapp: {
+//                 url: buildWhatsAppCTA(vehicle, dealerWhatsApp),
+//                 message: buildVehicleWhatsAppMessage(vehicle),
+//                 number: dealerWhatsApp,
+//             },
+//             call: {
+//                 url: buildCallCTA(dealerPhone),
+//                 number: dealerPhone,
+//             },
+//         }, "CTA links fetched");
+//     } catch (err) {
+//         next(err);
+//     }
+// };

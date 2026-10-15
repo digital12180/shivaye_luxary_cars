@@ -10,6 +10,7 @@ import Campaign from "../models/Campaign.js";
 import { ok, fail } from "../utils/response.js";
 import { sendNotification } from "../services/notification.service.js";
 import { extractAttribution } from "../services/attribution.service.js";
+import { notifyReservationConfirmed } from "../services/notification.service.js"
 
 
 export const expireStaleReservations = async () => {
@@ -462,26 +463,9 @@ export const confirmReservation = async (req, res, next) => {
         reservation.updatedBy = req.user._id;
         await reservation.save();
 
-        // ✅ Sahi version
-        const customer = await Customer.findById(reservation.customer);
-        if (customer) {
-            await sendNotification({
-                recipientType: "customer",
-                customerId: customer._id,
-                to: customer.phone,
-                channel: "whatsapp",
-                type: "reservation_confirmed",
-                title: "Reservation confirmed",
-                body: `Your reservation ${reservation.reservationNumber} is confirmed. Thank you!`,
-                template: {
-                    name: "reservation_confirmed",
-                    language: "en",
-                    variables: { reservationNumber: reservation.reservationNumber },
-                },
-                relatedTo: { reservation: reservation._id, vehicle: reservation.vehicle },
-                actionUrl: `/customer/reservations/${reservation._id}`,
-            });
-        }
+        notifyReservationConfirmed(reservation).catch((err) =>
+            console.error("Reservation notify failed:", err.message)
+        );
         return ok(res, reservation, "Reservation confirmed");
     } catch (err) {
         next(err);
@@ -669,4 +653,333 @@ export const getReservationStats = async (req, res, next) => {
     } catch (err) {
         next(err);
     }
+};
+
+import { detectRefundScenario, shouldAutoApprove, buildRefundMessage }
+    from "../services/refundPolicy.service.js";
+
+/* ============================================================
+   PUBLIC — Customer requests refund
+   POST /api/v1/reservations/:id/refund/request
+   Body: { inspectionDone, reason, customerEmail?, customerMessage? }
+   ============================================================ */
+export const requestRefund = async (req, res, next) => {
+    try {
+        const { inspectionDone = false, reason, customerEmail, customerMessage } = req.body;
+
+        const reservation = await Reservation.findById(req.params.id);
+        if (!reservation) return fail(res, "Reservation not found", 404);
+
+        // Only paid reservations can be refunded
+        if (reservation.paymentStatus === "pending") {
+            return fail(res, "No payment received on this reservation", 400);
+        }
+        if (["cancelled", "expired", "refunded"].includes(reservation.status)) {
+            return fail(res, `Cannot request refund for a ${reservation.status} reservation`, 400);
+        }
+        if (reservation.refundRequest) {
+            return fail(res, "A refund request already exists for this reservation", 409);
+        }
+
+        // Determine scenario
+        const scenario = detectRefundScenario({ inspectionDone });
+        const autoApprove = shouldAutoApprove(scenario);
+
+        // For scenario B, email is mandatory
+        if (scenario === "no_visit_email" && !customerEmail && !customerMessage) {
+            return fail(
+                res,
+                "Please provide an email or message explaining your refund request",
+                400
+            );
+        }
+
+        // Refund amount = whatever was paid
+        const refundAmount = reservation.amountPaid || 0;
+
+        reservation.refundRequest = {
+            requestedBy: "customer",
+            requestedAt: new Date(),
+            scenario,
+            reason: reason || null,
+            customerEmail: customerEmail || null,
+            customerMessage: customerMessage || null,
+            status: autoApprove ? "auto_approved" : "pending_review",
+            refundAmount,
+            refundMethod: "original_payment",
+        };
+
+        // If auto-approved (Scenario A), we still don't process immediately —
+        // it goes to CRM where staff clicks "Process refund" (which calls Razorpay).
+        // This matches client's "full refund" promise while keeping ops control.
+
+        await reservation.save();
+
+        // Notify CRM admin team
+        await sendNotification({
+            recipientType: "staff",        // use "admin" if you have that enum
+            to: process.env.ADMIN_EMAIL || "admin@shivayeluxurycars.com",
+            channel: "email",
+            type: "custom",
+            title: `Refund request — ${scenario === "physical_inspection" ? "AUTO" : "REVIEW"} — ${reservation.reservationNumber}`,
+            body:
+                scenario === "physical_inspection"
+                    ? `Customer ${reservation.buyerSnapshot?.name} requested full refund after physical inspection. Amount: ₹${refundAmount}.`
+                    : `Customer ${reservation.buyerSnapshot?.name} requested refund (no visit). Message: ${customerMessage || reason || "-"}. Amount: ₹${refundAmount}.`,
+            relatedTo: { reservation: reservation._id },
+        });
+
+        return ok(
+            res,
+            {
+                reservationId: reservation._id,
+                reservationNumber: reservation.reservationNumber,
+                scenario,
+                status: reservation.refundRequest.status,
+                refundAmount,
+                message: buildRefundMessage(scenario),
+            },
+            "Refund request submitted",
+            201
+        );
+    } catch (err) {
+        next(err);
+    }
+};
+/* ============================================================
+   CRM — Review refund request (Scenario B only)
+   PATCH /api/v1/reservations/:id/refund/review
+   Body: { action: "approve" | "reject", reviewNotes? }
+   ============================================================ */
+export const reviewRefundRequest = async (req, res, next) => {
+    try {
+        const { action, reviewNotes } = req.body;
+
+        if (!["approve", "reject"].includes(action)) {
+            return fail(res, "action must be 'approve' or 'reject'", 400);
+        }
+
+        const reservation = await Reservation.findById(req.params.id);
+        if (!reservation) return fail(res, "Reservation not found", 404);
+        if (!reservation.refundRequest) {
+            return fail(res, "No refund request found on this reservation", 404);
+        }
+
+        const rf = reservation.refundRequest;
+
+        // Scenario A auto-approved — no review needed
+        if (rf.scenario === "physical_inspection") {
+            return fail(res, "This refund was auto-approved. Use /refund/process instead.", 400);
+        }
+
+        if (rf.status !== "pending_review") {
+            return fail(res, `Refund request is already ${rf.status}`, 400);
+        }
+
+        rf.status = action === "approve" ? "approved" : "rejected";
+        rf.reviewedBy = req.user._id;
+        rf.reviewedAt = new Date();
+        rf.reviewNotes = reviewNotes || null;
+
+        await reservation.save();
+
+        // If rejected → notify customer
+        if (action === "reject") {
+            const customer = await Customer.findById(reservation.customer);
+            if (customer) {
+                await sendNotification({
+                    recipientType: "customer",
+                    customerId: customer._id,
+                    to: customer.phone,
+                    channel: "whatsapp",
+                    type: "custom",
+                    title: "Refund request update",
+                    body: `Hi ${customer.name}, after review, we are unable to process the refund for reservation ${reservation.reservationNumber}. Reason: ${reviewNotes || "As per policy"}. Please contact us for more details.`,
+                    relatedTo: { reservation: reservation._id },
+                });
+            }
+        }
+
+        // If approved → notify customer that refund will be processed shortly
+        if (action === "approve") {
+            const customer = await Customer.findById(reservation.customer);
+            if (customer) {
+                await sendNotification({
+                    recipientType: "customer",
+                    customerId: customer._id,
+                    to: customer.phone,
+                    channel: "whatsapp",
+                    type: "custom",
+                    title: "Refund approved",
+                    body: `Hi ${customer.name}, your refund of ₹${rf.refundAmount} for reservation ${reservation.reservationNumber} has been approved and will be processed shortly.`,
+                    relatedTo: { reservation: reservation._id },
+                });
+            }
+        }
+
+        return ok(res, reservation, `Refund ${rf.status}`);
+    } catch (err) {
+        next(err);
+    }
+};
+
+import Razorpay from "razorpay";  // top of file
+
+let razorpayClient = null;
+const getRazorpay = () => {
+  if (!razorpayClient) {
+    razorpayClient = new Razorpay({
+      key_id: process.env.RAZORPAY_KEY_ID,
+      key_secret: process.env.RAZORPAY_KEY_SECRET,
+    });
+  }
+  return razorpayClient;
+};
+
+/* ============================================================
+   CRM — Process refund via Razorpay
+   PATCH /api/v1/reservations/:id/refund/process
+   Body: { refundMethod?: "original_payment" | "bank_transfer" | "manual" }
+   ============================================================ */
+export const processRefundRequest = async (req, res, next) => {
+  try {
+    const reservation = await Reservation.findById(req.params.id);
+    if (!reservation) return fail(res, "Reservation not found", 404);
+    if (!reservation.refundRequest) {
+      return fail(res, "No refund request found", 404);
+    }
+
+    const rf = reservation.refundRequest;
+
+    // Can only process auto_approved (Scenario A) or approved (Scenario B)
+    if (!["auto_approved", "approved"].includes(rf.status)) {
+      return fail(res, `Cannot process refund with status: ${rf.status}`, 400);
+    }
+
+    // Get the original payment
+    const payment = await Payment.findOne({
+      reservation: reservation._id,
+      status: "paid",
+    }).sort("-paidAt");
+
+    if (!payment) return fail(res, "No successful payment found for this reservation", 404);
+    if (!payment.gatewayPaymentId) {
+      return fail(res, "Payment has no Razorpay payment ID", 400);
+    }
+
+    // Call Razorpay refund
+    const rzp = getRazorpay();
+    let rzRefund;
+    try {
+      rzRefund = await rzp.payments.refund(payment.gatewayPaymentId, {
+        amount: Math.round(rf.refundAmount * 100),   // paise
+        notes: {
+          reservationId: String(reservation._id),
+          reservationNumber: reservation.reservationNumber,
+          scenario: rf.scenario,
+          reviewNotes: rf.reviewNotes || "",
+        },
+      });
+    } catch (rzErr) {
+      console.error("Razorpay refund error:", rzErr.message);
+      return fail(res, `Payment gateway refund failed: ${rzErr.message}`, 400);
+    }
+
+    // Update refund request
+    rf.status = "processed";
+    rf.refundId = rzRefund.id;
+    rf.refundMethod = req.body.refundMethod || "original_payment";
+    rf.processedAt = new Date();
+    rf.processedBy = req.user._id;
+
+    // Update reservation
+    reservation.status = "refunded";
+    reservation.paymentStatus = "refunded";
+    reservation.refundedAt = new Date();
+    reservation.updatedBy = req.user._id;
+    await reservation.save();
+
+    // Update Payment record
+    payment.refund = {
+      refundId: rzRefund.id,
+      amount: rf.refundAmount,
+      reason: rf.reason || "Customer refund request",
+      status: rzRefund.status === "processed" ? "processed" : "pending",
+      initiatedAt: new Date(),
+      processedAt: rzRefund.status === "processed" ? new Date() : null,
+      initiatedBy: req.user._id,
+    };
+    if (rf.refundAmount === payment.amount) {
+      payment.status = "refunded";
+      payment.refundedAt = new Date();
+    }
+    await payment.save();
+
+    // Free up the vehicle
+    await Vehicle.findByIdAndUpdate(reservation.vehicle, {
+      status: "available",
+      reservedAt: null,
+      updatedBy: req.user._id,
+    });
+
+    // Notify customer
+    const customer = await Customer.findById(reservation.customer);
+    if (customer) {
+      await sendNotification({
+        recipientType: "customer",
+        customerId: customer._id,
+        to: customer.phone,
+        channel: "whatsapp",
+        type: "payment_refund",
+        title: "Refund processed",
+        body: `Hi ${customer.name}, your refund of ₹${rf.refundAmount} for reservation ${reservation.reservationNumber} has been processed. It will reflect in 3-5 business days.`,
+        relatedTo: {
+          reservation: reservation._id,
+          payment: payment._id,
+        },
+      });
+    }
+
+    return ok(
+      res,
+      {
+        reservationId: reservation._id,
+        reservationNumber: reservation.reservationNumber,
+        refundAmount: rf.refundAmount,
+        refundId: rzRefund.id,
+        status: "processed",
+      },
+      "Refund processed successfully"
+    );
+  } catch (err) {
+    next(err);
+  }
+};
+
+/* ============================================================
+   Get refund request details
+   GET /api/v1/reservations/:id/refund
+   ============================================================ */
+export const getRefundRequest = async (req, res, next) => {
+  try {
+    const reservation = await Reservation.findById(req.params.id)
+      .select("reservationNumber buyerSnapshot refundRequest status paymentStatus refundedAt")
+      .populate("refundRequest.reviewedBy", "name role")
+      .populate("refundRequest.processedBy", "name role");
+
+    if (!reservation) return fail(res, "Reservation not found", 404);
+    if (!reservation.refundRequest) {
+      return ok(res, null, "No refund request found");
+    }
+
+    return ok(res, {
+      reservationNumber: reservation.reservationNumber,
+      buyer: reservation.buyerSnapshot,
+      refund: reservation.refundRequest,
+      reservationStatus: reservation.status,
+      refundedAt: reservation.refundedAt,
+    });
+  } catch (err) {
+    next(err);
+  }
 };

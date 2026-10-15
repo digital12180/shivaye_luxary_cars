@@ -1,5 +1,52 @@
 import mongoose from "mongoose";
 
+const refundRequestSchema = new mongoose.Schema(
+    {
+        // Who initiated
+        requestedBy: {
+            type: String,
+            enum: ["customer", "staff", "system"],
+            required: true,
+        },
+        requestedAt: { type: Date, default: Date.now },
+
+        // Which scenario is this refund for
+        scenario: {
+            type: String,
+            enum: ["physical_inspection", "no_visit_email"],  // A or B
+            required: true,
+        },
+
+        // Reason from customer / staff
+        reason: { type: String, trim: true },
+        customerEmail: { type: String, trim: true },       // for scenario B
+        customerMessage: { type: String, trim: true },     // for scenario B
+
+        // Approval state (only for scenario B)
+        status: {
+            type: String,
+            enum: ["auto_approved", "pending_review", "approved", "rejected", "processed"],
+            default: "pending_review",
+            index: true,
+        },
+        reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        reviewedAt: { type: Date, default: null },
+        reviewNotes: { type: String, trim: true },
+
+        // Refund execution
+        refundAmount: { type: Number, default: 0, min: 0 },
+        refundId: { type: String, default: null },         // Razorpay refund ID
+        refundMethod: {
+            type: String,
+            enum: ["original_payment", "bank_transfer", "manual", null],
+            default: null,
+        },
+        processedAt: { type: Date, default: null },
+        processedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    },
+    { _id: false }
+);
+
 const reservationSchema = new mongoose.Schema(
     {
         /* ============ Identifiers ============ */
@@ -120,6 +167,7 @@ const reservationSchema = new mongoose.Schema(
         cancelledAt: { type: Date, default: null },
         convertedAt: { type: Date, default: null },
         refundedAt: { type: Date, default: null },
+        refundRequest: { type: refundRequestSchema, default: null },
 
         /* ============ Cancellation ============ */
         cancellationReason: { type: String, trim: true, default: null },

@@ -13,6 +13,7 @@ import {
     getInventoryStats,
     getVehicleSale,
     getVehicleHistory,
+    getVehicleCTA,
 } from "../controllers/vehicle.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 import { upload } from "../middleware/upload.middleware.js";
@@ -20,6 +21,7 @@ import { upload } from "../middleware/upload.middleware.js";
 const router = Router();
 
 /* ============ PUBLIC ROUTES ============ */
+
 router.get("/", listVehicles);
 router.get("/stats/summary", getInventoryStats); // admin-guarded below is skipped for stats? keep admin
 router.get("/:slugOrId", getVehicle);
@@ -95,5 +97,7 @@ router.get(
     restrictTo("admin", "sales_manager", "sales_executive"),
     getVehicleHistory
 );
+
+router.get("/:id/cta", getVehicleCTA);
 
 export default router;

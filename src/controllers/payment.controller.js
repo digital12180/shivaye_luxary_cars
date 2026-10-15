@@ -8,7 +8,7 @@ import Customer from "../models/Customer.js";
 import Lead from "../models/Lead.js";
 import LeadActivity from "../models/leadActivity.js";
 import { ok, fail } from "../utils/response.js";
-import { sendNotification } from "../services/notification.service.js"
+import { notifyPaymentSuccess } from "../services/notification.service.js"
 /* ============================================================
    Razorpay client (lazy init)
    ============================================================ */
@@ -357,6 +357,9 @@ export const verifyPayment = async (req, res, next) => {
 
     await session.commitTransaction();
     transactionCommitted = true;
+
+    notifyPaymentSuccess(payment, reservation).catch(console.error);
+
 
     return ok(res, {
       paymentId: payment.paymentId,

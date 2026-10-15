@@ -149,15 +149,13 @@ paymentSchema.index({ reservation: 1, status: 1 });
 paymentSchema.index({ gatewayOrderId: 1, gateway: 1 });
 
 /* Soft delete */
-paymentSchema.pre(/^find/, function (next) {
+paymentSchema.pre(/^find/, function () {
   this.where({ deletedAt: null });
-  next();
 });
 
 /* Auto net amount */
-paymentSchema.pre("save", function (next) {
+paymentSchema.pre("save", function () {
   this.netAmount = Math.max(0, (this.amount || 0) - (this.gatewayFee || 0));
-  next();
 });
 
 export default mongoose.model("Payment", paymentSchema);

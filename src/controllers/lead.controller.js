@@ -5,7 +5,7 @@ import Vehicle from "../models/Vehicle.js";
 import { ok, fail } from "../utils/response.js";
 import LeadActivity from "../models/leadActivity.js";
 import Campaign from "../models/Campaign.js";
-import { sendNotification } from "../services/notification.service.js";
+import { notifyLeadAssigned } from "../services/notification.service.js";
 import { extractAttribution } from "../services/attribution.service.js";
 import { captureLocation } from "../services/geolocation.service.js";
 
@@ -454,21 +454,7 @@ export const assignLead = async (req, res, next) => {
         if (!lead) return fail(res, "Lead not found", 404);
         const assignedToUser = lead.assignedTo;
 
-        await sendNotification({
-            recipientType: "staff",
-            userId: assignedToUser._id,
-            to: assignedToUser.email,
-            channel: "in_app",
-            type: "lead_assigned",
-            title: "New lead assigned",
-            body: `Lead assigned to you. Customer: ${lead.customer?.name || "N/A"}`,
-            priority: "high",
-            relatedTo: { lead: lead._id },
-            actionUrl: `/crm/leads/${lead._id}`,
-            actionLabel: "View lead",
-            createdBy: req.user._id,
-        });
-
+        notifyLeadAssigned(lead, staff).catch(console.error);
         return ok(res, lead, "Lead assigned");
     } catch (err) {
         next(err);

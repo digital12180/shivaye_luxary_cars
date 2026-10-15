@@ -11,13 +11,17 @@ import {
     completeReservation,
     deleteReservation,
     getReservationStats,
+    requestRefund,
+    reviewRefundRequest,
+    processRefundRequest,
+    getRefundRequest,
 } from "../controllers/reservation.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 
 const router = Router();
 
 /* ============ PUBLIC ============ */
-router.post("/public", publicCreateReservation);
+router.post("/public", publicCreateReservation); //done 
 
 /* ============ CRM STATS ============ */
 router.get(
@@ -89,6 +93,28 @@ router.delete(
     verifyJWT,
     restrictTo("admin", "sales_manager"),
     deleteReservation
+);
+
+// Customer initiates refund request (both scenarios)
+router.post("/:id/refund/request", requestRefund);
+
+/* ============ SHARED (customer panel + CRM) ============ */
+router.get("/:id/refund", verifyJWT, getRefundRequest);
+
+/* ============ CRM — Review (Scenario B) ============ */
+router.patch(
+  "/:id/refund/review",
+  verifyJWT,
+  restrictTo("admin", "sales_manager"),
+  reviewRefundRequest
+);
+
+/* ============ CRM — Process (Razorpay refund) ============ */
+router.patch(
+  "/:id/refund/process",
+  verifyJWT,
+  restrictTo("admin", "sales_manager"),
+  processRefundRequest
 );
 
 export default router;

@@ -305,10 +305,6 @@ export const markMyNotificationRead = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   CUSTOMER PANEL — Mark all as read
-   PATCH /api/v1/notifications/me/read-all
-   ============================================================ */
 export const markAllMyNotificationsRead = async (req, res, next) => {
     try {
         const result = await Notification.updateMany(
@@ -321,10 +317,6 @@ export const markAllMyNotificationsRead = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   CRM — My staff notifications (in-app inbox for sales exec)
-   GET /api/v1/notifications/inbox
-   ============================================================ */
 export const getMyInbox = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
@@ -353,10 +345,6 @@ export const getMyInbox = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   CRM — Mark staff notification read
-   PATCH /api/v1/notifications/inbox/:id/read
-   ============================================================ */
 export const markInboxNotificationRead = async (req, res, next) => {
     try {
         const notification = await Notification.findOneAndUpdate(
