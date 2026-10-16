@@ -1,7 +1,6 @@
 import User from "../models/User.js";
 import { ok, fail } from "../utils/response.js";
 
-// GET /api/v1/users
 export const listUsers = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
@@ -40,7 +39,6 @@ export const listUsers = async (req, res, next) => {
     }
 };
 
-// GET /api/v1/users/:id
 export const getUser = async (req, res, next) => {
     try {
         const user = await User.findById(req.params.id);
@@ -51,7 +49,6 @@ export const getUser = async (req, res, next) => {
     }
 };
 
-// POST /api/v1/users
 export const createUser = async (req, res, next) => {
     try {
         const { name, email, phone, password, role, permissions } = req.body;
@@ -78,7 +75,6 @@ export const createUser = async (req, res, next) => {
     }
 };
 
-// PATCH /api/v1/users/:id
 export const updateUser = async (req, res, next) => {
     try {
         const allowed = ["name", "phone", "profileImage", "role", "status", "permissions"];
@@ -100,7 +96,6 @@ export const updateUser = async (req, res, next) => {
     }
 };
 
-// DELETE /api/v1/users/:id
 export const deleteUser = async (req, res, next) => {
     try {
         const user = await User.findByIdAndUpdate(
