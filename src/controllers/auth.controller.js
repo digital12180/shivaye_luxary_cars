@@ -14,7 +14,6 @@ const cookieOpts = {
     sameSite: "strict",
 };
 
-// POST /api/v1/auth/register
 export const register = async (req, res, next) => {
     try {
         const { name, email, phone, password, role } = req.body;
@@ -166,7 +165,7 @@ export const forgotPassword = async (req, res, next) => {
             .digest("hex");
         user.passwordResetExpires = Date.now() + 15 * 60 * 1000;
         await user.save();
-
+        console.log("ltoken---", rawToken);
         // TODO: send reset link via email — `${process.env.CLIENT_URL}/reset-password/${rawToken}`
 
         return ok(res, {}, "If email exists, reset link sent");
@@ -204,4 +203,28 @@ export const resetPassword = async (req, res, next) => {
 // GET /api/v1/auth/me
 export const me = async (req, res) => {
     return ok(res, req.user, "Current user");
+};
+
+export const updateProfile = async (req, res, next) => {
+    try {
+        const { name, phone, profileImage } = req.body;
+
+        const user = await User.findById(req.user._id);
+        if (!user) return fail(res, "User not found", 404);
+
+        // Whitelist only safe fields
+        if (name !== undefined) user.name = name;
+        if (phone !== undefined) user.phone = phone;
+        if (profileImage !== undefined) user.profileImage = profileImage;
+
+        user.updatedBy = req.user._id;
+        await user.save();
+
+        const safe = user.toObject();
+        delete safe.password;
+
+        return ok(res, safe, "Profile updated");
+    } catch (err) {
+        next(err);
+    }
 };

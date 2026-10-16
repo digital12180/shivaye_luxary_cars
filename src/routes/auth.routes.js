@@ -7,10 +7,10 @@ import {
     changePassword,
     forgotPassword,
     resetPassword,
+    updateProfile,
     me,
 } from "../controllers/auth.controller.js";
 import { verifyJWT } from "../middleware/auth.middleware.js";
-
 const router = Router();
 
 router.post("/register", register);
@@ -21,5 +21,6 @@ router.post("/change-password", verifyJWT, changePassword);
 router.post("/forgot-password", forgotPassword);
 router.post("/reset-password/:token", resetPassword);
 router.get("/me", verifyJWT, me);
+router.patch("/update-profile", verifyJWT, updateProfile);
 
 export default router;
