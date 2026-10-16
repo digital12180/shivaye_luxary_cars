@@ -9,71 +9,83 @@ const vehicleSchema = new mongoose.Schema(
             index: true,
         },
 
-        brand: { type: String, required: true, trim: true, index: true },
-        model: { type: String, required: true, trim: true, index: true },
-        variant: { type: String, trim: true },
+        // ✅ NEW — Reference to Brand model
+        brandRef: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Brand",
+            default: null,
+            index: true,
+        },
 
+        // Kept as String for display / search (denormalized)
+        brand: { type: String, required: true, trim: true, index: true },
+
+        // ✅ NEW — Reference to Category model
+        categoryRef: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Category",
+            default: null,
+            index: true,
+        },
+
+        // Kept as String for display / search (denormalized)
         category: {
             type: String,
-            enum: ["new", "used", "certified", "other"],
-            default: "used",
+            default: "Luxury SUV",
+            index: true,
         },
+
+        model: { type: String, required: true, trim: true, index: true },
+        variant: { type: String, trim: true },
 
         year: { type: Number, required: true, index: true },
         registrationYear: { type: Number },
 
         fuelType: {
             type: String,
-            enum: ["petrol", "diesel", "electric", "hybrid", "cng", "other"],
+            enum: ["Petrol", "Diesel", "Electric", "Hybrid", "CNG", "Other"],
             required: true,
             index: true,
         },
 
         transmission: {
             type: String,
-            enum: ["automatic", "manual", "amt", "dct", "cvt", "other"],
+            enum: ["Automatic", "Manual", "AMT", "DCT", "CVT", "Other"],
             required: true,
             index: true,
         },
 
-        bodyType: {
-            type: String,
-            enum: ["sedan", "suv", "hatchback", "coupe", "convertible", "mpv", "other"],
-            trim: true,
-        },
+        bodyType: { type: String, trim: true },
 
-        color: { type: String, trim: true },
+        exteriorColour: { type: String, trim: true },
 
         ownership: {
             type: String,
-            enum: ["first", "second", "third", "fourth", "other"],
-            default: "first",
+            enum: ["First", "Second", "Third", "Fourth", "Other"],
+            default: "First",
         },
 
         kilometers: { type: Number, required: true, min: 0, index: true },
 
-        price: { type: Number, required: true, min: 0, index: true },
+        askingPrice: { type: Number, required: true, min: 0, index: true },
+        price: { type: Number, min: 0 },
         soldPrice: { type: Number, min: 0, default: null },
 
         registrationNumber: { type: String, trim: true, uppercase: true },
         description: { type: String, trim: true },
 
         features: [{ type: String, trim: true }],
-        images: [{ type: String }],       // secure_urls (existing)
-        imagePublicIds: [{ type: String }], // NEW — for deletion
+        images: [{ type: String }],
+        imagePublicIds: [{ type: String }],
         video: { type: String, default: null },
-        videoPublicId: { type: String, default: null }, // NEW
+        videoPublicId: { type: String, default: null },
 
-        location: {
-            city: { type: String, trim: true, index: true },
-            state: { type: String, trim: true },
-            country: { type: String, default: "India" },
-        },
+        location: { type: String, trim: true, index: true },
 
         status: {
             type: String,
-            enum: ["available", "reserved", "booked", "sold", "inactive"],
-            default: "available",
+            enum: ["Available", "Reserved", "Booked", "Sold", "Inactive"],
+            default: "Available",
             index: true,
         },
 
@@ -94,7 +106,6 @@ const vehicleSchema = new mongoose.Schema(
         reservedAt: { type: Date, default: null },
         soldAt: { type: Date, default: null },
 
-        // Sale & Buyer (BRD 31)
         soldTo: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", default: null },
         saleExecutive: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
 
@@ -105,13 +116,12 @@ const vehicleSchema = new mongoose.Schema(
     { timestamps: true }
 );
 
-// Compound indexes for common filters (BRD 6.2)
 vehicleSchema.index({ brand: 1, model: 1, year: 1 });
 vehicleSchema.index({ status: 1, isPublished: 1 });
-vehicleSchema.index({ price: 1, kilometers: 1 });
-vehicleSchema.index({ "location.city": 1, status: 1 });
+vehicleSchema.index({ askingPrice: 1, kilometers: 1 });
+vehicleSchema.index({ location: 1, status: 1 });
+vehicleSchema.index({ brandRef: 1, categoryRef: 1 });
 
-// Full-text search
 vehicleSchema.index({
     brand: "text",
     model: "text",
@@ -119,13 +129,10 @@ vehicleSchema.index({
     description: "text",
 });
 
-// Soft delete filter
 vehicleSchema.pre(/^find/, function () {
     this.where({ deletedAt: null });
-    // next();
 });
 
-// Auto-generate slug if not provided
 vehicleSchema.pre("save", function () {
     if (!this.slug) {
         const base = `${this.brand}-${this.model}-${this.year}-${this._id}`
@@ -134,7 +141,6 @@ vehicleSchema.pre("save", function () {
             .replace(/^-+|-+$/g, "");
         this.slug = base;
     }
-    // next();
 });
 
 export default mongoose.model("Vehicle", vehicleSchema);

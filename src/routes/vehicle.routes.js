@@ -20,25 +20,32 @@ import { upload } from "../middleware/upload.middleware.js";
 
 const router = Router();
 
-/* ============ PUBLIC ROUTES ============ */
-
+/* ============ PUBLIC ============ */
 router.get("/", listVehicles);
-router.get("/stats/summary", getInventoryStats); // admin-guarded below is skipped for stats? keep admin
 router.get("/:slugOrId", getVehicle);
 router.get("/:id/similar", getSimilarVehicles);
+router.get("/:id/cta", getVehicleCTA);
 
-/* ============ ADMIN ROUTES ============ */
+/* ============ CRM STATS ============ */
+router.get(
+    "/stats/summary",
+    verifyJWT,
+    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager"),
+    getInventoryStats
+);
+
+/* ============ CRM CRUD ============ */
 router.get(
     "/admin/all",
     verifyJWT,
-    restrictTo("admin", "sales_manager", "inventory_manager", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     adminListVehicles
 );
 
 router.post(
     "/",
     verifyJWT,
-    restrictTo("admin", "inventory_manager"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     upload.fields([
         { name: "images", maxCount: 10 },
         { name: "video", maxCount: 1 },
@@ -49,7 +56,7 @@ router.post(
 router.patch(
     "/:id",
     verifyJWT,
-    restrictTo("admin", "inventory_manager"),
+    restrictTo("admin", "sales_manager", "sales_executive"),
     upload.fields([
         { name: "images", maxCount: 10 },
         { name: "video", maxCount: 1 },
@@ -57,47 +64,14 @@ router.patch(
     updateVehicle
 );
 
-router.patch(
-    "/:id/status",
-    verifyJWT,
-    restrictTo("admin", "inventory_manager", "sales_manager"),
-    updateStatus
-);
+router.patch("/:id/status", verifyJWT, restrictTo("admin", "sales_manager", "sales_executive"), updateStatus);
+router.patch("/:id/sold", verifyJWT, restrictTo("admin", "sales_manager", "sales_executive"), markAsSold);
+router.patch("/:id/featured", verifyJWT, restrictTo("admin", "sales_manager"), toggleFeatured);
 
-router.patch(
-    "/:id/sold",
-    verifyJWT,
-    restrictTo("admin", "sales_manager"),
-    markAsSold
-);
+router.delete("/:id", verifyJWT, restrictTo("admin", "sales_manager"), deleteVehicle);
 
-router.patch(
-    "/:id/featured",
-    verifyJWT,
-    restrictTo("admin", "inventory_manager", "marketing_manager"),
-    toggleFeatured
-);
-
-router.delete(
-    "/:id",
-    verifyJWT,
-    restrictTo("admin", "inventory_manager"),
-    deleteVehicle
-);
-router.get(
-    "/:id/sale",
-    verifyJWT,
-    restrictTo("admin", "sales_manager", "sales_executive"),
-    getVehicleSale
-);
-
-router.get(
-    "/:id/history",
-    verifyJWT,
-    restrictTo("admin", "sales_manager", "sales_executive"),
-    getVehicleHistory
-);
-
-router.get("/:id/cta", getVehicleCTA);
+/* ============ CRM HISTORY & SALE ============ */
+router.get("/:id/sale", verifyJWT, restrictTo("admin", "sales_manager", "sales_executive"), getVehicleSale);
+router.get("/:id/history", verifyJWT, restrictTo("admin", "sales_manager", "sales_executive"), getVehicleHistory);
 
 export default router;

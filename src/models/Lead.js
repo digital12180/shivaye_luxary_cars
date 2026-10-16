@@ -33,56 +33,101 @@ const leadSchema = new mongoose.Schema(
             index: true,
         },
 
-        leadType: {
+        // Frontend: "Customer name *" (stored in Customer model, but kept here for quick access)
+        // Frontend: "Mobile *" (stored in Customer model, but kept here for quick access)
+        // We will populate customer for these fields.
+
+        // Frontend: "Email" (stored in Customer model)
+
+        // Frontend: "Enquiry type"
+        enquiryType: {
             type: String,
-            enum: ["purchase", "exchange", "finance"],
-            default: "purchase",
+            enum: ["Purchase", "Exchange", "Finance"],
+            default: "Purchase",
             index: true,
         },
 
+        // Frontend: "Interested vehicle *"
+        interestedVehicle: {
+            type: String,
+            trim: true,
+            required: true,
+        },
+
+        // Frontend: "Brand"
+        brand: {
+            type: String,
+            trim: true,
+        },
+
+        // Frontend: "Budget (INR)"
+        budget: {
+            type: Number,
+            default: null,
+        },
+
+        // Frontend: "Source"
+        source: {
+            type: String,
+            enum: [
+                "Website",
+                "Instagram",
+                "Referral",
+                "Walk-in",
+                "Google Ads",
+                "Facebook Ads",
+                "WhatsApp",
+                "Phone",
+                "Other",
+            ],
+            required: true,
+            index: true,
+        },
+
+        // Frontend: "Pipeline status"
         status: {
             type: String,
             enum: [
-                "new",
-                "contacted",
-                "qualified",
-                "car shared",
-                "visit scheduled",
-                "test drive",
-                "negotiation",
-                "reserved",
-                "booked",
-                "won/sold",
-                "lost",
+                "New",
+                "Contacted",
+                "Qualified",
+                "Test Drive",
+                "Visit Scheduled",
+                "Negotiation",
+                "Reserved",
+                "Booked",
+                "Won",
+                "Lost",
             ],
-            default: "new",
+            default: "New",
             index: true,
         },
 
+        // Frontend: "Next follow-up"
+        nextFollowUpAt: {
+            type: Date,
+            default: null,
+            index: true,
+        },
+
+        // Frontend: "City"
+        city: {
+            type: String,
+            trim: true,
+            index: true,
+        },
+
+        // Frontend: "Notes"
+        notes: {
+            type: String,
+            trim: true,
+        },
+
+        // Additional fields from your existing model
         priority: {
             type: String,
             enum: ["hot", "warm", "cold"],
             default: "warm",
-            index: true,
-        },
-
-        source: {
-            type: String,
-            enum: [
-                "google ads",
-                "facebook ads",
-                "instagram",
-                "organic",
-                "website",
-                "whatsapp",
-                "phone",
-                "walk in",
-                "referral",
-                "manual",
-                "car wale",
-                "other",
-            ],
-            required: true,
             index: true,
         },
 
@@ -93,16 +138,6 @@ const leadSchema = new mongoose.Schema(
         },
 
         requirement: { type: String, trim: true },
-
-        interestedBrand: { type: String, trim: true },
-        interestedModel: { type: String, trim: true },
-
-        budget: {
-            min: { type: Number, default: null },
-            max: { type: Number, default: null },
-        },
-
-        notes: { type: String, trim: true },
 
         lostReason: { type: String, trim: true, default: null },
         lostReasonCategory: {
@@ -119,19 +154,14 @@ const leadSchema = new mongoose.Schema(
             default: null,
         },
 
-        // Deal tracking (BRD 34.2)
         dealValue: { type: Number, default: null, min: 0 },
         bookingAmount: { type: Number, default: null, min: 0 },
 
-        // Follow-up tracking (BRD 9.1)
-        nextFollowUpAt: { type: Date, default: null, index: true },
         lastContactedAt: { type: Date, default: null },
         firstContactedAt: { type: Date, default: null },
 
-        // Stage movement audit
         stageHistory: [stageHistorySchema],
 
-        // Duplicate handling (BRD 9.2)
         duplicateOf: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Lead",
@@ -139,12 +169,10 @@ const leadSchema = new mongoose.Schema(
         },
         isDuplicate: { type: Boolean, default: false },
 
-        // Closure
         closedAt: { type: Date, default: null },
         wonAt: { type: Date, default: null },
         lostAt: { type: Date, default: null },
 
-        // Marketing attribution (BRD 11.2)
         attribution: {
             utmSource: { type: String, default: null },
             utmMedium: { type: String, default: null },
@@ -158,7 +186,6 @@ const leadSchema = new mongoose.Schema(
             latestTouchAt: { type: Date, default: null },
         },
 
-        // IP-based location (BRD 12)
         location: {
             country: { type: String, default: null },
             state: { type: String, default: null },
@@ -167,7 +194,6 @@ const leadSchema = new mongoose.Schema(
 
         ipAddress: { type: String, default: null },
 
-        // Activity counter (dashboard perf)
         totalActivities: { type: Number, default: 0 },
 
         isActive: { type: Boolean, default: true, index: true },
@@ -183,20 +209,19 @@ const leadSchema = new mongoose.Schema(
 leadSchema.index({ status: 1, assignedTo: 1 });
 leadSchema.index({ status: 1, nextFollowUpAt: 1 });
 leadSchema.index({ source: 1, createdAt: -1 });
-leadSchema.index({ leadType: 1, status: 1 });
+leadSchema.index({ enquiryType: 1, status: 1 });
 leadSchema.index({ customer: 1, status: 1 });
 
 leadSchema.index({
     requirement: "text",
     notes: "text",
-    interestedBrand: "text",
-    interestedModel: "text",
+    brand: "text",
+    interestedVehicle: "text",
 });
 
 // Soft delete
 leadSchema.pre(/^find/, function () {
     this.where({ deletedAt: null });
-    // next();
 });
 
 // Track stage changes + timestamps
@@ -209,20 +234,19 @@ leadSchema.pre("save", function () {
                 changedBy: this.updatedBy || this.createdBy,
             });
 
-            if (this.status === "won") {
+            if (this.status === "Won") {
                 this.wonAt = new Date();
                 this.closedAt = new Date();
             }
-            if (this.status === "lost") {
+            if (this.status === "Lost") {
                 this.lostAt = new Date();
                 this.closedAt = new Date();
             }
-            if (this.status === "contacted" && !this.firstContactedAt) {
+            if (this.status === "Contacted" && !this.firstContactedAt) {
                 this.firstContactedAt = new Date();
             }
         }
     }
-    // next();
 });
 
 export default mongoose.model("Lead", leadSchema);

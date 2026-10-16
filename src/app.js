@@ -14,6 +14,8 @@ import paymentRoutes from "./routes/payment.routes.js";
 import reservationRoutes from "./routes/reservation.routes.js";
 import saleRoutes from "./routes/sale.routes.js";
 import vehicleRoutes from "./routes/vehicle.routes.js";
+import brandRoutes from "./routes/brand.routes.js";
+import categoryRoutes from "./routes/category.routes.js";
 import { notFound, errorHandler } from "./middleware/error.middleware.js";
 
 const app = express();
@@ -63,6 +65,8 @@ app.use("/api/v1/payments", paymentRoutes);
 app.use("/api/v1/reservations", reservationRoutes);
 app.use("/api/v1/sales", saleRoutes);
 app.use("/api/v1/vehicles", vehicleRoutes);
+app.use("/api/v1/brands", brandRoutes);
+app.use("/api/v1/categories", categoryRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

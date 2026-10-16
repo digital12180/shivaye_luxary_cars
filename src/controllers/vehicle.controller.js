@@ -1,45 +1,48 @@
 import mongoose from "mongoose";
 import Vehicle from "../models/Vehicle.js";
+import Brand from "../models/Brand.js";
+import Category from "../models/Category.js";
 import { ok, fail } from "../utils/response.js";
-import { uploadMultipleToCloudinary, uploadToCloudinary, deleteMultipleFromCloudinary } from "../utils/cloudinary.js";
+import { uploadMultipleToCloudinary, uploadToCloudinary, deleteMultipleFromCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js";
 
-// Helper — generate next stock id
 const generateStockId = async () => {
     const count = await Vehicle.countDocuments();
-    const id = `SLC-${String(count + 1).padStart(5, "0")}`;
-    return id;
+    return `SLC-${String(count + 1).padStart(5, "0")}`;
 };
 
-// PUBLIC: GET /api/v1/vehicles
+/* ============================================================
+   PUBLIC — GET /api/v1/vehicles
+   ============================================================ */
 export const listVehicles = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 12;
         const {
-            search, brand, model, city,
+            search, brand, model, location,
             fuelType, transmission, bodyType,
             minPrice, maxPrice, minYear, maxYear,
             maxKilometers, status, featured,
+            brandRef, categoryRef,
             sortBy = "-createdAt",
         } = req.query;
 
         const filter = { isPublished: true };
-
-        // Public listing only shows these statuses by default
-        filter.status = status ? status : { $in: ["available", "reserved", "booked", "sold"] };
+        filter.status = status ? status : { $in: ["Available", "Reserved", "Booked", "Sold"] };
 
         if (brand) filter.brand = new RegExp(`^${brand}$`, "i");
+        if (brandRef) filter.brandRef = brandRef;
+        if (categoryRef) filter.categoryRef = categoryRef;
         if (model) filter.model = new RegExp(model, "i");
-        if (city) filter["location.city"] = new RegExp(`^${city}$`, "i");
+        if (location) filter.location = new RegExp(location, "i");
         if (fuelType) filter.fuelType = fuelType;
         if (transmission) filter.transmission = transmission;
         if (bodyType) filter.bodyType = bodyType;
         if (featured === "true") filter.featured = true;
 
         if (minPrice || maxPrice) {
-            filter.price = {};
-            if (minPrice) filter.price.$gte = Number(minPrice);
-            if (maxPrice) filter.price.$lte = Number(maxPrice);
+            filter.askingPrice = {};
+            if (minPrice) filter.askingPrice.$gte = Number(minPrice);
+            if (maxPrice) filter.askingPrice.$lte = Number(maxPrice);
         }
         if (minYear || maxYear) {
             filter.year = {};
@@ -58,7 +61,12 @@ export const listVehicles = async (req, res, next) => {
         }
 
         const [data, total] = await Promise.all([
-            Vehicle.find(filter).sort(sortBy).skip((page - 1) * limit).limit(limit),
+            Vehicle.find(filter)
+                .populate("brandRef", "name logo slug")
+                .populate("categoryRef", "name slug")
+                .sort(sortBy)
+                .skip((page - 1) * limit)
+                .limit(limit),
             Vehicle.countDocuments(filter),
         ]);
 
@@ -71,7 +79,9 @@ export const listVehicles = async (req, res, next) => {
     }
 };
 
-// PUBLIC: GET /api/v1/vehicles/:slugOrId
+/* ============================================================
+   PUBLIC — GET /api/v1/vehicles/:slugOrId
+   ============================================================ */
 export const getVehicle = async (req, res, next) => {
     try {
         const { slugOrId } = req.params;
@@ -80,12 +90,13 @@ export const getVehicle = async (req, res, next) => {
             : { slug: slugOrId };
 
         const vehicle = await Vehicle.findOne(query)
+            .populate("brandRef", "name logo slug website country")
+            .populate("categoryRef", "name slug description")
             .populate("soldTo", "name phone city")
             .populate("saleExecutive", "name");
 
         if (!vehicle) return fail(res, "Vehicle not found", 404);
 
-        // Increment views (BRD 6.3 – tracking)
         await Vehicle.updateOne({ _id: vehicle._id }, { $inc: { views: 1 } });
 
         return ok(res, vehicle);
@@ -94,7 +105,9 @@ export const getVehicle = async (req, res, next) => {
     }
 };
 
-// PUBLIC: GET /api/v1/vehicles/:id/similar
+/* ============================================================
+   PUBLIC — GET /api/v1/vehicles/:id/similar
+   ============================================================ */
 export const getSimilarVehicles = async (req, res, next) => {
     try {
         const vehicle = await Vehicle.findById(req.params.id);
@@ -102,19 +115,21 @@ export const getSimilarVehicles = async (req, res, next) => {
 
         const similar = await Vehicle.find({
             _id: { $ne: vehicle._id },
-            status: "available",
+            status: "Available",
             isPublished: true,
             $or: [
-                { brand: vehicle.brand },
-                { bodyType: vehicle.bodyType },
+                { brandRef: vehicle.brandRef },
+                { categoryRef: vehicle.categoryRef },
                 {
-                    price: {
-                        $gte: vehicle.price * 0.8,
-                        $lte: vehicle.price * 1.2,
+                    askingPrice: {
+                        $gte: vehicle.askingPrice * 0.8,
+                        $lte: vehicle.askingPrice * 1.2,
                     },
                 },
             ],
         })
+            .populate("brandRef", "name logo")
+            .populate("categoryRef", "name")
             .limit(6)
             .sort("-createdAt");
 
@@ -124,24 +139,53 @@ export const getSimilarVehicles = async (req, res, next) => {
     }
 };
 
+/* ============================================================
+   ADMIN — POST /api/v1/vehicles
+   ============================================================ */
 export const createVehicle = async (req, res, next) => {
     try {
         const stockId = req.body.stockId || (await generateStockId());
 
-        // ---- 1. Upload images to Cloudinary ----
+        // ---- Auto-resolve brandRef / categoryRef ----
+        let brandRef = req.body.brandRef || null;
+        let categoryRef = req.body.categoryRef || null;
+
+        // If only brandRef provided → denormalize brand name
+        if (brandRef && mongoose.isValidObjectId(brandRef)) {
+            const brandDoc = await Brand.findById(brandRef);
+            if (brandDoc) req.body.brand = brandDoc.name;
+        }
+        // If only brand name provided → try find matching brand
+        else if (req.body.brand) {
+            const brandDoc = await Brand.findOne({
+                name: new RegExp(`^${req.body.brand}$`, "i"),
+            });
+            if (brandDoc) brandRef = brandDoc._id;
+        }
+
+        // Same for category
+        if (categoryRef && mongoose.isValidObjectId(categoryRef)) {
+            const catDoc = await Category.findById(categoryRef);
+            if (catDoc) req.body.category = catDoc.name;
+        } else if (req.body.category) {
+            const catDoc = await Category.findOne({
+                name: new RegExp(`^${req.body.category}$`, "i"),
+            });
+            if (catDoc) categoryRef = catDoc._id;
+        }
+
+        // ---- Upload images ----
         let imageUrls = [];
         let imagePublicIds = [];
-
         if (req.files?.images?.length) {
             const uploaded = await uploadMultipleToCloudinary(req.files.images);
             imageUrls = uploaded.map((f) => f.url);
             imagePublicIds = uploaded.map((f) => f.public_id);
         }
 
-        // ---- 2. Upload video (if any) ----
+        // ---- Upload video ----
         let videoUrl = null;
         let videoPublicId = null;
-
         if (req.files?.video?.length) {
             const v = req.files.video[0];
             const uploaded = await uploadToCloudinary(
@@ -153,13 +197,13 @@ export const createVehicle = async (req, res, next) => {
             videoPublicId = uploaded.public_id;
         }
 
-        // ---- 3. Create vehicle ----
         const vehicle = await Vehicle.create({
             ...req.body,
             stockId,
+            brandRef,
+            categoryRef,
             images: imageUrls,
             video: videoUrl,
-            // store public_ids for later deletion
             imagePublicIds,
             videoPublicId,
             createdBy: req.user._id,
@@ -172,7 +216,9 @@ export const createVehicle = async (req, res, next) => {
     }
 };
 
-// ADMIN: PATCH /api/v1/vehicles/:id
+/* ============================================================
+   ADMIN — PATCH /api/v1/vehicles/:id
+   ============================================================ */
 export const updateVehicle = async (req, res, next) => {
     try {
         const protectedFields = ["slug", "views", "soldTo", "soldPrice", "soldAt", "saleExecutive"];
@@ -181,28 +227,32 @@ export const updateVehicle = async (req, res, next) => {
         const vehicle = await Vehicle.findById(req.params.id);
         if (!vehicle) return fail(res, "Vehicle not found", 404);
 
-        // ---- Handle new image uploads ----
+        // ---- Resolve brand/category refs if provided ----
+        if (req.body.brandRef && mongoose.isValidObjectId(req.body.brandRef)) {
+            const brandDoc = await Brand.findById(req.body.brandRef);
+            if (brandDoc) req.body.brand = brandDoc.name;
+        }
+        if (req.body.categoryRef && mongoose.isValidObjectId(req.body.categoryRef)) {
+            const catDoc = await Category.findById(req.body.categoryRef);
+            if (catDoc) req.body.category = catDoc.name;
+        }
+
+        // ---- Images ----
         if (req.files?.images?.length) {
             const uploaded = await uploadMultipleToCloudinary(req.files.images);
-
-            // Optionally delete old images from Cloudinary
             if (vehicle.imagePublicIds?.length) {
                 await deleteMultipleFromCloudinary(vehicle.imagePublicIds, "image");
             }
-
             vehicle.images = uploaded.map((f) => f.url);
             vehicle.imagePublicIds = uploaded.map((f) => f.public_id);
         }
 
-        // ---- Handle new video ----
+        // ---- Video ----
         if (req.files?.video?.length) {
             const v = req.files.video[0];
-
-            // delete old video
             if (vehicle.videoPublicId) {
                 await deleteFromCloudinary(vehicle.videoPublicId, "video");
             }
-
             const uploaded = await uploadToCloudinary(
                 v.buffer,
                 "video",
@@ -212,7 +262,6 @@ export const updateVehicle = async (req, res, next) => {
             vehicle.videoPublicId = uploaded.public_id;
         }
 
-        // ---- Apply other scalar fields ----
         Object.assign(vehicle, req.body);
         vehicle.updatedBy = req.user._id;
         await vehicle.save();
@@ -223,31 +272,32 @@ export const updateVehicle = async (req, res, next) => {
     }
 };
 
-// ADMIN: PATCH /api/v1/vehicles/:id/status
+/* ============================================================
+   ADMIN — PATCH /api/v1/vehicles/:id/status
+   ============================================================ */
 export const updateStatus = async (req, res, next) => {
     try {
         const { status } = req.body;
-        const allowed = ["available", "reserved", "booked", "sold", "inactive"];
+        const allowed = ["Available", "Reserved", "Booked", "Sold", "Inactive"];
         if (!allowed.includes(status))
             return fail(res, "Invalid status value", 400);
 
         const update = { status, updatedBy: req.user._id };
-        if (status === "reserved") update.reservedAt = new Date();
-        if (status === "sold") update.soldAt = new Date();
+        if (status === "Reserved") update.reservedAt = new Date();
+        if (status === "Sold") update.soldAt = new Date();
 
-        const vehicle = await Vehicle.findByIdAndUpdate(req.params.id, update, {
-            new: true,
-        });
+        const vehicle = await Vehicle.findByIdAndUpdate(req.params.id, update, { new: true });
         if (!vehicle) return fail(res, "Vehicle not found", 404);
 
-        // BRD 32/33: website reads same backend → status auto-reflected
         return ok(res, vehicle, `Vehicle marked as ${status}`);
     } catch (err) {
         next(err);
     }
 };
 
-// ADMIN: PATCH /api/v1/vehicles/:id/sold
+/* ============================================================
+   ADMIN — PATCH /api/v1/vehicles/:id/sold
+   ============================================================ */
 export const markAsSold = async (req, res, next) => {
     try {
         const { soldTo, soldPrice, saleExecutive } = req.body;
@@ -255,7 +305,7 @@ export const markAsSold = async (req, res, next) => {
         const vehicle = await Vehicle.findByIdAndUpdate(
             req.params.id,
             {
-                status: "sold",
+                status: "Sold",
                 soldTo,
                 soldPrice,
                 saleExecutive: saleExecutive || req.user._id,
@@ -272,7 +322,9 @@ export const markAsSold = async (req, res, next) => {
     }
 };
 
-// ADMIN: PATCH /api/v1/vehicles/:id/featured
+/* ============================================================
+   ADMIN — PATCH /api/v1/vehicles/:id/featured
+   ============================================================ */
 export const toggleFeatured = async (req, res, next) => {
     try {
         const vehicle = await Vehicle.findById(req.params.id);
@@ -288,13 +340,14 @@ export const toggleFeatured = async (req, res, next) => {
     }
 };
 
-// ADMIN: DELETE /api/v1/vehicles/:id
+/* ============================================================
+   ADMIN — DELETE /api/v1/vehicles/:id
+   ============================================================ */
 export const deleteVehicle = async (req, res, next) => {
     try {
         const vehicle = await Vehicle.findById(req.params.id);
         if (!vehicle) return fail(res, "Vehicle not found", 404);
 
-        // 🧹 Clean up Cloudinary assets
         if (vehicle.imagePublicIds?.length) {
             await deleteMultipleFromCloudinary(vehicle.imagePublicIds, "image");
         }
@@ -303,7 +356,7 @@ export const deleteVehicle = async (req, res, next) => {
         }
 
         vehicle.deletedAt = new Date();
-        vehicle.status = "inactive";
+        vehicle.status = "Inactive";
         vehicle.updatedBy = req.user._id;
         await vehicle.save();
 
@@ -313,17 +366,21 @@ export const deleteVehicle = async (req, res, next) => {
     }
 };
 
-// ADMIN: GET /api/v1/vehicles/admin/all
+/* ============================================================
+   ADMIN — GET /api/v1/vehicles/admin/all
+   ============================================================ */
 export const adminListVehicles = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
-        const { status, brand, city, search } = req.query;
+        const { status, brand, location, search, brandRef, categoryRef } = req.query;
 
         const filter = {};
         if (status) filter.status = status;
         if (brand) filter.brand = new RegExp(brand, "i");
-        if (city) filter["location.city"] = new RegExp(city, "i");
+        if (location) filter.location = new RegExp(location, "i");
+        if (brandRef) filter.brandRef = brandRef;
+        if (categoryRef) filter.categoryRef = categoryRef;
         if (search)
             filter.$or = [
                 { brand: new RegExp(search, "i") },
@@ -334,6 +391,8 @@ export const adminListVehicles = async (req, res, next) => {
 
         const [data, total] = await Promise.all([
             Vehicle.find(filter)
+                .populate("brandRef", "name logo")
+                .populate("categoryRef", "name")
                 .populate("createdBy", "name")
                 .populate("updatedBy", "name")
                 .sort("-createdAt")
@@ -351,24 +410,22 @@ export const adminListVehicles = async (req, res, next) => {
     }
 };
 
-// ADMIN: GET /api/v1/vehicles/stats/summary  (BRD 34.1)
+/* ============================================================
+   ADMIN — GET /api/v1/vehicles/stats/summary
+   ============================================================ */
 export const getInventoryStats = async (req, res, next) => {
     try {
         const [statusCounts, totalValue, featuredCount] = await Promise.all([
             Vehicle.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
             Vehicle.aggregate([
-                { $match: { status: { $in: ["available", "reserved", "booked"] } } },
-                { $group: { _id: null, totalValue: { $sum: "$price" } } },
+                { $match: { status: { $in: ["Available", "Reserved", "Booked"] } } },
+                { $group: { _id: null, totalValue: { $sum: "$askingPrice" } } },
             ]),
             Vehicle.countDocuments({ featured: true, isPublished: true }),
         ]);
 
         const stats = {
-            available: 0,
-            reserved: 0,
-            booked: 0,
-            sold: 0,
-            inactive: 0,
+            Available: 0, Reserved: 0, Booked: 0, Sold: 0, Inactive: 0,
         };
         statusCounts.forEach((s) => (stats[s._id] = s.count));
 
@@ -384,9 +441,7 @@ export const getInventoryStats = async (req, res, next) => {
 };
 
 /* ============================================================
-   CRM — Get the Sale record for a vehicle (BRD 31)
-   GET /api/v1/vehicles/:id/sale
-   Returns the vehicle + buyer + sale record in one shot.
+   CRM — GET /api/v1/vehicles/:id/sale
    ============================================================ */
 export const getVehicleSale = async (req, res, next) => {
     try {
@@ -395,21 +450,17 @@ export const getVehicleSale = async (req, res, next) => {
             return fail(res, "Invalid vehicle id", 400);
 
         const vehicle = await Vehicle.findById(id)
+            .populate("brandRef", "name logo")
+            .populate("categoryRef", "name")
             .populate("soldTo", "name phone email city state source")
             .populate("saleExecutive", "name email role");
 
         if (!vehicle) return fail(res, "Vehicle not found", 404);
 
-        // Only sold vehicles have a linked sale
-        if (vehicle.status !== "sold") {
-            return ok(res, {
-                isSold: false,
-                vehicle,
-                sale: null,
-            }, "Vehicle is not sold yet");
+        if (vehicle.status !== "Sold") {
+            return ok(res, { isSold: false, vehicle, sale: null }, "Vehicle is not sold yet");
         }
 
-        // Lazy import avoids circular dependency at file top
         const Sale = (await import("../models/Sale.js")).default;
 
         const sale = await Sale.findOne({ vehicle: vehicle._id })
@@ -419,21 +470,14 @@ export const getVehicleSale = async (req, res, next) => {
             .populate("campaign", "name source type")
             .populate("documents.uploadedBy", "name");
 
-        return ok(res, {
-            isSold: true,
-            vehicle,
-            sale,
-        }, "Vehicle sale record fetched");
+        return ok(res, { isSold: true, vehicle, sale }, "Vehicle sale record fetched");
     } catch (err) {
         next(err);
     }
 };
 
 /* ============================================================
-   CRM — Full history timeline for a vehicle
-   GET /api/v1/vehicles/:id/history
-   Returns: vehicle, linked leads, appointments, reservations,
-            and sale (if any) — perfect for the CRM detail page.
+   CRM — GET /api/v1/vehicles/:id/history
    ============================================================ */
 export const getVehicleHistory = async (req, res, next) => {
     try {
@@ -442,13 +486,14 @@ export const getVehicleHistory = async (req, res, next) => {
             return fail(res, "Invalid vehicle id", 400);
 
         const vehicle = await Vehicle.findById(id)
+            .populate("brandRef", "name logo")
+            .populate("categoryRef", "name")
             .populate("soldTo", "name phone email")
             .populate("createdBy", "name")
             .populate("updatedBy", "name");
 
         if (!vehicle) return fail(res, "Vehicle not found", 404);
 
-        // Lazy imports to avoid circular deps
         const [
             { default: Lead },
             { default: Appointment },
@@ -474,7 +519,6 @@ export const getVehicleHistory = async (req, res, next) => {
                 .select("customer type status scheduledAt completedAt assignedTo")
                 .sort("-scheduledAt"),
 
-            // Reservation model will exist after next step — safe even if collection empty
             Reservation.find({ vehicle: vehicle._id })
                 .populate("customer", "name phone")
                 .select("customer status paymentStatus amount createdAt referenceNumber")
@@ -504,16 +548,14 @@ export const getVehicleHistory = async (req, res, next) => {
 };
 
 /* ============================================================
-   BRD 13 — Persistent WhatsApp + Click-to-Call CTA
-   PUBLIC: GET /api/v1/vehicles/:id/cta
+   PUBLIC — GET /api/v1/vehicles/:id/cta
    ============================================================ */
-// controllers/vehicle.controller.js
 import { buildWhatsAppCTA, buildCallCTA, buildVehicleWhatsAppMessage } from "../services/notification.service.js";
 
 export const getVehicleCTA = async (req, res, next) => {
     try {
         const vehicle = await Vehicle.findById(req.params.id)
-            .select("brand model variant year price stockId");
+            .select("brand model variant year askingPrice stockId");
 
         if (!vehicle) return fail(res, "Vehicle not found", 404);
 
@@ -535,35 +577,3 @@ export const getVehicleCTA = async (req, res, next) => {
         next(err);
     }
 };
-// export const getVehicleCTA = async (req, res, next) => {
-//     try {
-//         const { id } = req.params;
-//         if (!mongoose.isValidObjectId(id))
-//             return fail(res, "Invalid vehicle id", 400);
-
-//         const vehicle = await Vehicle.findById(id)
-//             .select("brand model variant year price stockId images location status");
-
-//         if (!vehicle) return fail(res, "Vehicle not found", 404);
-
-//         const dealerPhone = process.env.DEALER_PHONE || "+919876543210";
-//         const dealerWhatsApp = process.env.DEALER_WHATSAPP || dealerPhone;
-
-//         const { buildWhatsAppCTA, buildCallCTA, buildVehicleWhatsAppMessage } =
-//             await import("../services/notification.service.js");
-
-//         return ok(res, {
-//             whatsapp: {
-//                 url: buildWhatsAppCTA(vehicle, dealerWhatsApp),
-//                 message: buildVehicleWhatsAppMessage(vehicle),
-//                 number: dealerWhatsApp,
-//             },
-//             call: {
-//                 url: buildCallCTA(dealerPhone),
-//                 number: dealerPhone,
-//             },
-//         }, "CTA links fetched");
-//     } catch (err) {
-//         next(err);
-//     }
-// };
