@@ -9,7 +9,6 @@ import { notifyLeadAssigned } from "../services/notification.service.js";
 import { extractAttribution } from "../services/attribution.service.js";
 import { captureLocation } from "../services/geolocation.service.js";
 
-/* ================= PUBLIC ================= */
 
 export const publicCreateLead = async (req, res, next) => {
     try {
@@ -177,8 +176,12 @@ export const publicCreateLead = async (req, res, next) => {
 };
 
 /* ================= CRM ================= */
+// Most recent: GET /api/v1/leads?sort=recent
 
-// GET /api/v1/leads
+// Price low-high: GET /api/v1/leads?sort=price_low_high
+
+// Name A-Z: GET /api/v1/leads?sort=name_asc
+
 export const listLeads = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
@@ -186,29 +189,33 @@ export const listLeads = async (req, res, next) => {
         const {
             status, source, assignedTo, enquiryType, priority,
             city, search, fromDate, toDate,
-            followUpToday, overdue,
+            followUpToday, overdue, sort,
         } = req.query;
 
         const filter = {};
 
+        // Role-based access
         if (req.user.role === "sales_executive") {
             filter.assignedTo = req.user._id;
         } else if (assignedTo) {
             filter.assignedTo = assignedTo;
         }
 
+        // Direct field filters
         if (status) filter.status = status;
         if (source) filter.source = source;
         if (enquiryType) filter.enquiryType = enquiryType;
         if (priority) filter.priority = priority;
         if (city) filter.city = new RegExp(city, "i");
 
+        // Date range filter (From & To)
         if (fromDate || toDate) {
             filter.createdAt = {};
             if (fromDate) filter.createdAt.$gte = new Date(fromDate);
             if (toDate) filter.createdAt.$lte = new Date(toDate);
         }
 
+        // Follow-up filters
         if (followUpToday === "true") {
             const start = new Date();
             start.setHours(0, 0, 0, 0);
@@ -230,13 +237,37 @@ export const listLeads = async (req, res, next) => {
                 { interestedVehicle: new RegExp(search, "i") },
             ];
         }
+        let sortOptions = { createdAt: -1 };
+
+        switch (sort) {
+            case "recent":
+                sortOptions = { createdAt: -1 };
+                break;
+            case "name_asc": 
+                sortOptions = { interestedVehicle: 1 };
+                break;
+            case "price_low_high": 
+                sortOptions = { budget: 1 };
+                break;
+            case "price_high_low":
+                sortOptions = { budget: -1 };
+                break;
+            case "city_asc":
+                sortOptions = { city: 1 };
+                break;
+            case "followup_asc":
+                sortOptions = { nextFollowUpAt: 1 };
+                break;
+            default:
+                sortOptions = { createdAt: -1 };
+        }
 
         const [data, total] = await Promise.all([
             Lead.find(filter)
                 .populate("customer", "name phone email city source")
                 .populate("vehicle", "brand model year askingPrice images slug status")
                 .populate("assignedTo", "name email role")
-                .sort("-createdAt")
+                .sort(sortOptions) 
                 .skip((page - 1) * limit)
                 .limit(limit),
             Lead.countDocuments(filter),
@@ -629,8 +660,6 @@ export const getLeadDashboard = async (req, res, next) => {
         next(err);
     }
 };
-
-// GET /api/v1/leads/stats/source-performance
 export const getSourcePerformance = async (req, res, next) => {
     try {
         const data = await Lead.aggregate([

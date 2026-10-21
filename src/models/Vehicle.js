@@ -8,19 +8,13 @@ const vehicleSchema = new mongoose.Schema(
             trim: true,
             index: true,
         },
-
-        // ✅ NEW — Reference to Brand model
         brandRef: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Brand",
             default: null,
             index: true,
         },
-
-        // Kept as String for display / search (denormalized)
         brand: { type: String, required: true, trim: true, index: true },
-
-        // ✅ NEW — Reference to Category model
         categoryRef: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Category",

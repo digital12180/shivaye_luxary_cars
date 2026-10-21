@@ -216,26 +216,69 @@ export const getAppointment = async (req, res, next) => {
    ============================================================ */
 export const createAppointment = async (req, res, next) => {
     try {
-        const { customer: customerId, vehicle: vehicleId, type, scheduledAt } = req.body;
+        const {
+            customer: customerId,
+            customerName, customerPhone,
+            vehicle: vehicleId,
+            vehicleName,
+            type, scheduledAt, time, status,
+            assignedTo, notes
+        } = req.body;
 
-        if (!customerId || !type || !scheduledAt)
-            return fail(res, "customer, type and scheduledAt are required", 400);
+        if (!scheduledAt) return fail(res, "Visit date is required", 400);
 
-        const customer = await Customer.findById(customerId);
-        if (!customer) return fail(res, "Customer not found", 404);
+        /* 1. Resolve Customer */
+        let customer = null;
+        if (customerId && mongoose.isValidObjectId(customerId)) {
+            customer = await Customer.findById(customerId);
+        }
 
+        // If no ID provided but name/phone exists, create a new customer
+        if (!customer && customerName) {
+            customer = await Customer.findOne({
+                $or: [
+                    { name: customerName },
+                    ...(customerPhone ? [{ phone: customerPhone }] : [])
+                ]
+            });
+
+            if (!customer) {
+                customer = await Customer.create({
+                    name: customerName,
+                    phone: customerPhone || `temp-${Date.now()}`, // Fallback phone if not provided
+                    source: "manual",
+                });
+            }
+        }
+
+        if (!customer) return fail(res, "Customer is required", 400);
+
+        /* 2. Resolve Vehicle */
         let vehicle = null;
         if (vehicleId && mongoose.isValidObjectId(vehicleId)) {
             vehicle = await Vehicle.findById(vehicleId);
         }
 
+        /* 3. Create Appointment */
         const appointment = await Appointment.create({
-            ...req.body,
             customer: customer._id,
+            customerName: customerName || customer.name,
+            customerPhone: customerPhone || customer.phone,
+
             vehicle: vehicle?._id || null,
+            vehicleName: vehicleName || (vehicle ? `${vehicle.brand} ${vehicle.model}` : null),
+
+            type: type || "showroom_visit",
+            scheduledAt: new Date(scheduledAt),
+            time: time || null,
+            status: status || "Requested",
+            assignedTo: assignedTo || req.user._id,
+            notes,
+
             createdBy: req.user._id,
             updatedBy: req.user._id,
         });
+
         return ok(res, appointment, "Appointment created", 201);
     } catch (err) {
         next(err);
@@ -243,7 +286,7 @@ export const createAppointment = async (req, res, next) => {
 };
 
 /* ============================================================
-   CRM — Update appointment
+   CRM — Update appointment (From Edit Appointment Modal)
    PATCH /api/v1/appointments/:id
    ============================================================ */
 export const updateAppointment = async (req, res, next) => {
@@ -265,7 +308,17 @@ export const updateAppointment = async (req, res, next) => {
             return fail(res, "Not authorized", 403);
         }
 
-        Object.assign(appointment, req.body);
+        const { scheduledAt, time, status, customerName, vehicleName, assignedTo, notes } = req.body;
+
+        // Update fields from UI
+        if (scheduledAt) appointment.scheduledAt = new Date(scheduledAt);
+        if (time) appointment.time = time;
+        if (status) appointment.status = status;
+        if (customerName) appointment.customerName = customerName;
+        if (vehicleName) appointment.vehicleName = vehicleName;
+        if (assignedTo) appointment.assignedTo = assignedTo;
+        if (notes) appointment.notes = notes;
+
         appointment.updatedBy = req.user._id;
         await appointment.save();
 
@@ -304,37 +357,31 @@ export const assignAppointment = async (req, res, next) => {
 export const updateAppointmentStatus = async (req, res, next) => {
     try {
         const { status, cancelledReason, cancelledReasonCategory } = req.body;
-        const allowed = ["scheduled", "confirmed", "completed", "cancelled", "no_show"];
+
+        // ✅ Updated allowed statuses
+        const allowed = ["Requested", "Confirmed", "Completed", "Rescheduled", "Cancelled"];
         if (!allowed.includes(status)) return fail(res, "Invalid status", 400);
 
         const appointment = await Appointment.findById(req.params.id);
         if (!appointment) return fail(res, "Appointment not found", 404);
 
-        if (
-            req.user.role === "sales_executive" &&
-            String(appointment.assignedTo) !== String(req.user._id)
-        ) {
-            return fail(res, "Not authorized", 403);
-        }
-
         appointment.status = status;
         appointment.updatedBy = req.user._id;
 
-        if (status === "confirmed") {
+        if (status === "Confirmed") {
             appointment.confirmedAt = new Date();
             appointment.customerConfirmed = true;
         }
-        if (status === "completed") appointment.completedAt = new Date();
-        if (status === "cancelled") {
+        if (status === "Completed") appointment.completedAt = new Date();
+        if (status === "Cancelled") {
             appointment.cancelledAt = new Date();
             appointment.cancelledReason = cancelledReason || null;
             appointment.cancelledReasonCategory = cancelledReasonCategory || null;
         }
-        if (status === "no_show") appointment.completedAt = new Date();
 
         await appointment.save();
 
-        // Log on linked lead
+        // Log on linked lead if exists
         if (appointment.lead) {
             await LeadActivity.create({
                 lead: appointment.lead,

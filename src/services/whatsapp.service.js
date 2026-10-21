@@ -1,93 +1,83 @@
-// services/whatsapp.service.js
 import axios from "axios";
+import WhatsAppMessage from "../models/Whatsapp.js";
 
-/* ============================================================
-   BRD 13 — WhatsApp Business API
-   Integration enabled only when the client provides the
-   business account and template approvals.
-   ============================================================ */
 const WABA_TOKEN = process.env.WABA_TOKEN;
 const WABA_PHONE_NUMBER_ID = process.env.WABA_PHONE_NUMBER_ID;
 const WABA_API_VERSION = process.env.WABA_API_VERSION || "v19.0";
 const WABA_BASE_URL = `https://graph.facebook.com/${WABA_API_VERSION}`;
 
-/* ------------------------------------------------------------
-   Enabled check
-   ------------------------------------------------------------ */
 export const isWhatsAppEnabled = () =>
     process.env.WHATSAPP_ENABLED === "true" &&
     Boolean(WABA_TOKEN) &&
     Boolean(WABA_PHONE_NUMBER_ID);
 
-/* ------------------------------------------------------------
-   Phone normalization → E.164 without "+"
-   Handles India formats: 10-digit, +91XXXXXXXXXX, 91XXXXXXXXXX
-   ------------------------------------------------------------ */
 export const normalizePhone = (phone, defaultCountryCode = "91") => {
     if (!phone) return null;
     let digits = String(phone).replace(/\D/g, "");
-
-    // 10-digit local number → prefix country code
     if (digits.length === 10) digits = `${defaultCountryCode}${digits}`;
-
-    // 12-digit starting with 91 → already OK
-    if (digits.length === 12 && digits.startsWith(defaultCountryCode)) {
-        return digits;
-    }
-
-    // Otherwise return as-is (international)
+    if (digits.length === 12 && digits.startsWith(defaultCountryCode)) return digits;
     return digits;
 };
 
-/* ------------------------------------------------------------
-   Build WABA template components from positional variables
-   Input : { "1": "Rahul", "2": "RES-001" }
-   Output: [{ type: "body", parameters: [{type:"text",text:"Rahul"}, ...] }]
-   ------------------------------------------------------------ */
 const buildTemplateComponents = (variables = {}) => {
     const keys = Object.keys(variables);
     if (!keys.length) return [];
-
     const params = keys
         .sort((a, b) => Number(a) - Number(b))
-        .map((k) => ({
-            type: "text",
-            text: String(variables[k] ?? ""),
-        }));
-
+        .map((k) => ({ type: "text", text: String(variables[k] ?? "") }));
     return [{ type: "body", parameters: params }];
 };
 
-/* ------------------------------------------------------------
-   Send WhatsApp message — template or free text
-   ------------------------------------------------------------ */
+/* ============================================================
+   MAIN SEND — ab DB mein bhi save karega
+   ============================================================ */
 export const sendWhatsAppMessage = async ({
     to,
     templateName = null,
     language = "en",
     variables = {},
     body = null,
+    relatedTo = null,          // NEW: optional link (Lead/User/Vehicle)
 }) => {
     const phone = normalizePhone(to);
     if (!phone) throw new Error("Invalid WhatsApp recipient");
 
-    /* ---- Stub mode (no WABA approval yet) ---- */
+    // 1️⃣ Pehle DB mein "queued" record bana dein
+    const record = await WhatsAppMessage.create({
+        direction: "outbound",
+        type: templateName ? "template" : "text",
+        phone,
+        templateName,
+        language,
+        variables,
+        body,
+        relatedTo,
+        status: "queued",
+    });
+
+    /* ---- Stub mode ---- */
     if (!isWhatsAppEnabled()) {
         if (process.env.NODE_ENV !== "production") {
             console.log(
                 `[WA-DISABLED] to=${phone} template=${templateName || "-"} body=${body || "-"}`
             );
         }
+        record.status = "sent";
+        record.providerResponse = { mode: "stub", phone, templateName };
+        record.statusHistory.push({ status: "sent" });
+        await record.save();
+
         return {
             id: `wa_stub_${Date.now()}`,
             success: true,
             provider: "internal",
             stub: true,
+            dbId: record._id,
             response: { mode: "stub", phone, templateName },
         };
     }
 
-    /* ---- Live mode: Meta WABA API ---- */
+    /* ---- Live mode ---- */
     const payload = templateName
         ? {
             messaging_product: "whatsapp",
@@ -121,10 +111,20 @@ export const sendWhatsAppMessage = async ({
             }
         );
 
+        const waMessageId = res.data?.messages?.[0]?.id || null;
+
+        // 2️⃣ Success → DB update
+        record.waMessageId = waMessageId;
+        record.status = "sent";
+        record.providerResponse = res.data;
+        record.statusHistory.push({ status: "sent" });
+        await record.save();
+
         return {
-            id: res.data?.messages?.[0]?.id || null,
+            id: waMessageId,
             success: true,
             provider: "meta_waba",
+            dbId: record._id,
             response: res.data,
         };
     } catch (err) {
@@ -133,81 +133,103 @@ export const sendWhatsAppMessage = async ({
             err?.response?.data?.error?.error_data?.details ||
             err.message;
 
-        // Attach raw API response for audit
+        // 3️⃣ Failure → DB update
+        record.status = "failed";
+        record.error = { message: apiError, raw: err?.response?.data };
+        record.statusHistory.push({ status: "failed" });
+        await record.save();
+
         const wrapped = new Error(`WABA send failed: ${apiError}`);
         wrapped.raw = err?.response?.data;
+        wrapped.dbId = record._id;
         throw wrapped;
     }
 };
 
-/* ------------------------------------------------------------
-   BRD 13 — Vehicle-specific WhatsApp message builder
-   ------------------------------------------------------------ */
-export const buildVehicleWhatsAppMessage = (vehicle, dealerName = "SLC Motors") => {
-    const vehicleLine = [
-        vehicle?.brand,
-        vehicle?.model,
-        vehicle?.variant,
-        vehicle?.year,
-    ]
-        .filter(Boolean)
-        .join(" ");
-
-    const stockLine = vehicle?.stockId ? `Stock ID: ${vehicle.stockId}` : "";
-    const priceLine = vehicle?.price
-        ? `Price: ₹${Number(vehicle.price).toLocaleString("en-IN")}`
-        : "";
-
-    return `Hi ${dealerName}, I'm interested in the ${vehicleLine} (${stockLine}). ${priceLine}. Please share more details.`.trim();
-};
-
-/* ------------------------------------------------------------
-   BRD 13 — Click-to-chat URL (no API call)
-   Used for the persistent WhatsApp CTA on the website.
-   ------------------------------------------------------------ */
-export const buildWhatsAppClickUrl = (phone, message = "") => {
-    const digits = normalizePhone(phone);
-    const text = message ? `?text=${encodeURIComponent(message)}` : "";
-    return `https://wa.me/${digits}${text}`;
-};
-
-/* ------------------------------------------------------------
-   Optional: parse inbound WABA webhook
-   Returns { kind: "inbound" | "status", ... }
-   ------------------------------------------------------------ */
-export const parseWhatsAppWebhook = (body) => {
+/* ============================================================
+   WEBHOOK PARSER — ab DB mein inbound/status save karega
+   ============================================================ */
+export const parseWhatsAppWebhook = async (body) => {
     const value = body?.entry?.[0]?.changes?.[0]?.value;
     if (!value) return null;
 
-    /* Inbound message from user */
+    /* ---- Inbound message ---- */
     if (value.messages?.length) {
         const msg = value.messages[0];
+        const text =
+            msg.text?.body ||
+            msg.button?.text ||
+            msg.interactive?.button_reply?.title ||
+            null;
+
+        const alreadyExists = await WhatsAppMessage.findOne({ waMessageId: msg.id });
+        if (alreadyExists) {
+            return { kind: "inbound", duplicate: true, dbId: alreadyExists._id };
+        }
+        // DB mein inbound message save karein
+        const saved = await WhatsAppMessage.create({
+            direction: "inbound",
+            type: msg.type || "text",
+            phone: msg.from,
+            body: text,
+            waMessageId: msg.id,
+            status: "received",
+            contact: value.contacts?.[0] || null,
+            statusHistory: [{ status: "received" }],
+        });
+
         return {
             kind: "inbound",
             from: msg.from,
             messageId: msg.id,
-            text:
-                msg.text?.body ||
-                msg.button?.text ||
-                msg.interactive?.button_reply?.title ||
-                null,
+            text,
             timestamp: msg.timestamp,
             contact: value.contacts?.[0] || null,
+            dbId: saved._id,
         };
     }
 
-    /* Delivery / read status update */
+    /* ---- Delivery / read status ---- */
     if (value.statuses?.length) {
         const st = value.statuses[0];
+
+        // waMessageId se record dhundein aur status update karein
+        const existing = await WhatsAppMessage.findOne({ waMessageId: st.id });
+        if (existing) {
+            existing.status = st.status; // sent | delivered | read | failed
+            existing.statusHistory.push({ status: st.status });
+            if (st.errors?.[0]) existing.error = st.errors[0];
+            await existing.save();
+        }
+
         return {
             kind: "status",
             messageId: st.id,
-            status: st.status,              
+            status: st.status,
             recipient: st.recipient_id,
             timestamp: st.timestamp,
             error: st.errors?.[0] || null,
+            dbId: existing?._id || null,
         };
     }
 
     return null;
+};
+
+/* ---- Baaki functions (no change) ---- */
+export const buildVehicleWhatsAppMessage = (vehicle, dealerName = "SLC Motors") => {
+    const vehicleLine = [vehicle?.brand, vehicle?.model, vehicle?.variant, vehicle?.year]
+        .filter(Boolean)
+        .join(" ");
+    const stockLine = vehicle?.stockId ? `Stock ID: ${vehicle.stockId}` : "";
+    const priceLine = vehicle?.price
+        ? `Price: ₹${Number(vehicle.price).toLocaleString("en-IN")}`
+        : "";
+    return `Hi ${dealerName}, I'm interested in the ${vehicleLine} (${stockLine}). ${priceLine}. Please share more details.`.trim();
+};
+
+export const buildWhatsAppClickUrl = (phone, message = "") => {
+    const digits = normalizePhone(phone);
+    const text = message ? `?text=${encodeURIComponent(message)}` : "";
+    return `https://wa.me/${digits}${text}`;
 };

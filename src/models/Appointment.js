@@ -19,12 +19,19 @@ const appointmentSchema = new mongoose.Schema(
       index: true,
     },
 
+    // ✅ NEW: For manual text input (e.g., "Tara Suri")
+    customerName: { type: String, trim: true },
+    customerPhone: { type: String, trim: true },
+
     vehicle: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Vehicle",
       default: null,
       index: true,
     },
+
+    // ✅ NEW: For manual text input (e.g., "BMW 5 Series")
+    vehicleName: { type: String, trim: true },
 
     lead: {
       type: mongoose.Schema.Types.ObjectId,
@@ -49,20 +56,21 @@ const appointmentSchema = new mongoose.Schema(
     type: {
       type: String,
       enum: ["showroom_visit", "test_drive"],
-      required: true,
+      default: "showroom_visit",
       index: true,
     },
 
+    // ✅ UPDATED: Status enum to match UI
     status: {
       type: String,
       enum: [
-        "scheduled",
-        "confirmed",
-        "completed",
-        "cancelled",
-        "no_show",
+        "Requested",
+        "Confirmed",
+        "Completed",
+        "Rescheduled",
+        "Cancelled",
       ],
-      default: "scheduled",
+      default: "Requested",
       index: true,
     },
 
@@ -72,25 +80,22 @@ const appointmentSchema = new mongoose.Schema(
       index: true,
     },
 
+    // ✅ NEW: Separate time string (e.g., "12:30 PM")
+    time: { type: String, trim: true },
+
     durationMinutes: { type: Number, default: 30, min: 15 },
     location: { type: String, trim: true },
     showroomAddress: { type: String, trim: true },
+
+    // ... (source and attribution remain same)
     source: {
       type: String,
       enum: [
-        "google_ads",
-        "facebook_ads",
-        "instagram",
-        "organic",
-        "direct_website",
-        "whatsapp",
-        "phone",
-        "walk_in",
-        "referral",
-        "manual",
-        "other",
+        "google_ads", "facebook_ads", "instagram", "organic",
+        "direct_website", "whatsapp", "phone", "walk_in",
+        "referral", "manual", "other",
       ],
-      default: "direct_website",
+      default: "manual",
     },
 
     attribution: {
@@ -102,35 +107,28 @@ const appointmentSchema = new mongoose.Schema(
       landingPage: { type: String, default: null },
     },
 
+    // ✅ "Visit notes" from UI
     notes: { type: String, trim: true },
 
-    // Cancellation
     cancelledAt: { type: Date, default: null },
     cancelledReason: { type: String, trim: true, default: null },
     cancelledReasonCategory: {
       type: String,
       enum: [
-        "customer_rescheduled",
-        "customer_not_interested",
-        "vehicle_unavailable",
-        "weather",
-        "staff_unavailable",
-        "other",
-        null,
+        "customer_rescheduled", "customer_not_interested",
+        "vehicle_unavailable", "weather", "staff_unavailable",
+        "other", null,
       ],
       default: null,
     },
 
-    // Reschedule tracking
     rescheduledFrom: { type: Date, default: null },
     rescheduledCount: { type: Number, default: 0 },
 
-    // Completion
     completedAt: { type: Date, default: null },
     customerConfirmed: { type: Boolean, default: false },
     confirmedAt: { type: Date, default: null },
 
-    // Post-appointment feedback
     feedback: feedbackSchema,
 
     isActive: { type: Boolean, default: true, index: true },
@@ -142,11 +140,11 @@ const appointmentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Compound indexes
 appointmentSchema.index({ status: 1, scheduledAt: 1 });
 appointmentSchema.index({ assignedTo: 1, scheduledAt: 1 });
 appointmentSchema.index({ customer: 1, status: 1 });
 appointmentSchema.index({ vehicle: 1, scheduledAt: 1 });
+
 appointmentSchema.pre(/^find/, function () {
   this.where({ deletedAt: null });
 });

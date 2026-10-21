@@ -26,7 +26,7 @@ router.post("/public", publicCreateLead);
 router.get(
     "/stats/dashboard",
     verifyJWT,
-    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager","hr"),
     getLeadDashboard
 );
 
@@ -41,7 +41,7 @@ router.get(
 router.get(
     "/",
     verifyJWT,
-    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager","hr"),
     listLeads
 );
 

@@ -15,8 +15,7 @@ import {
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 
 const router = Router();
-
-/* ============ PUBLIC ============ */
+ 
 router.post("/public", publicCreateAppointment);
 
 /* ============ CRM STATS ============ */

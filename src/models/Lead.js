@@ -12,6 +12,13 @@ const stageHistorySchema = new mongoose.Schema(
 
 const leadSchema = new mongoose.Schema(
     {
+        leadNumber: {
+            type: String,
+            unique: true,
+            index: true,
+            trim: true,
+        },
+
         customer: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Customer",
@@ -33,13 +40,6 @@ const leadSchema = new mongoose.Schema(
             index: true,
         },
 
-        // Frontend: "Customer name *" (stored in Customer model, but kept here for quick access)
-        // Frontend: "Mobile *" (stored in Customer model, but kept here for quick access)
-        // We will populate customer for these fields.
-
-        // Frontend: "Email" (stored in Customer model)
-
-        // Frontend: "Enquiry type"
         enquiryType: {
             type: String,
             enum: ["Purchase", "Exchange", "Finance"],
@@ -47,83 +47,58 @@ const leadSchema = new mongoose.Schema(
             index: true,
         },
 
-        // Frontend: "Interested vehicle *"
         interestedVehicle: {
             type: String,
             trim: true,
             required: true,
         },
 
-        // Frontend: "Brand"
         brand: {
             type: String,
             trim: true,
         },
 
-        // Frontend: "Budget (INR)"
         budget: {
             type: Number,
             default: null,
         },
 
-        // Frontend: "Source"
         source: {
             type: String,
             enum: [
-                "Website",
-                "Instagram",
-                "Referral",
-                "Walk-in",
-                "Google Ads",
-                "Facebook Ads",
-                "WhatsApp",
-                "Phone",
-                "Other",
+                "Website", "Instagram", "Referral", "Walk-in",
+                "Google Ads", "Facebook Ads", "WhatsApp", "Phone", "Other"
             ],
             required: true,
             index: true,
         },
 
-        // Frontend: "Pipeline status"
         status: {
             type: String,
             enum: [
-                "New",
-                "Contacted",
-                "Qualified",
-                "Test Drive",
-                "Visit Scheduled",
-                "Negotiation",
-                "Reserved",
-                "Booked",
-                "Won",
-                "Lost",
+                "New", "Contacted", "Qualified", "Car Shared", "Visit Scheduled",
+                "Test Drive", "Negotiation", "Reserved", "Booked", "Won", "Lost",
             ],
             default: "New",
             index: true,
         },
-
-        // Frontend: "Next follow-up"
         nextFollowUpAt: {
             type: Date,
             default: null,
             index: true,
         },
 
-        // Frontend: "City"
         city: {
             type: String,
             trim: true,
             index: true,
         },
 
-        // Frontend: "Notes"
         notes: {
             type: String,
             trim: true,
         },
 
-        // Additional fields from your existing model
         priority: {
             type: String,
             enum: ["hot", "warm", "cold"],
@@ -142,15 +117,7 @@ const leadSchema = new mongoose.Schema(
         lostReason: { type: String, trim: true, default: null },
         lostReasonCategory: {
             type: String,
-            enum: [
-                "price",
-                "not_interested",
-                "bought_elsewhere",
-                "no_response",
-                "financing",
-                "other",
-                null,
-            ],
+            enum: ["price", "not_interested", "bought_elsewhere", "no_response", "financing", "other", null],
             default: null,
         },
 
@@ -193,7 +160,6 @@ const leadSchema = new mongoose.Schema(
         },
 
         ipAddress: { type: String, default: null },
-
         totalActivities: { type: Number, default: 0 },
 
         isActive: { type: Boolean, default: true, index: true },
@@ -219,12 +185,16 @@ leadSchema.index({
     interestedVehicle: "text",
 });
 
-// Soft delete
+leadSchema.pre("save", async function () {
+    if (!this.leadNumber) {
+        const count = await mongoose.model("Lead").countDocuments();
+        this.leadNumber = `LD-${String(count + 1).padStart(5, "0")}`;
+    }
+});
+
 leadSchema.pre(/^find/, function () {
     this.where({ deletedAt: null });
 });
-
-// Track stage changes + timestamps
 leadSchema.pre("save", function () {
     if (this.isModified("status")) {
         const prev = this.$__.priorDoc?.status;
