@@ -10,7 +10,8 @@ import {
 
 const cookieOpts = {
     httpOnly: true,
-    secure: true
+    secure: true,
+    sameSite: "none",
 };
 
 export const register = async (req, res, next) => {
@@ -105,7 +106,7 @@ export const logout = async (req, res, next) => {
 export const refreshToken = async (req, res, next) => {
     try {
 
-        console.log("refresh token called",req.cookies?.refreshToken);
+        console.log("refresh token called", req.cookies?.refreshToken);
         const token = req.cookies?.refreshToken || req.body.refreshToken;
         if (!token) return fail(res, "Refresh token missing", 401);
 
