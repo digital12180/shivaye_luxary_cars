@@ -10,8 +10,7 @@ import {
 
 const cookieOpts = {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
+    secure: true
 };
 
 export const register = async (req, res, next) => {
