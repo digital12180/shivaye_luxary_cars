@@ -615,3 +615,39 @@ export const getVehicleCTA = async (req, res, next) => {
         next(err);
     }
 };
+
+/* ============================================================
+   ADMIN — PATCH /api/v1/vehicles/:id/rc-check
+   ============================================================ */
+export const updateRcCheckStatus = async (req, res, next) => {
+    try {
+        const { rcCheck } = req.body;
+        const allowed = ["Not checked", "Verified", "Pending"];
+
+        if (!allowed.includes(rcCheck)) {
+            return fail(res, "Invalid RC check status", 400);
+        }
+
+        const vehicle = await Vehicle.findById(req.params.id);
+        if (!vehicle) return fail(res, "Vehicle not found", 404);
+
+        vehicle.rcCheck = rcCheck;
+        vehicle.updatedBy = req.user._id;
+
+        // Agar verify hua hai, to timestamp aur user save karein
+        if (rcCheck === "Verified") {
+            vehicle.rcVerifiedAt = new Date();
+            vehicle.rcVerifiedBy = req.user._id;
+        } else {
+            // Agar wapas Not Checked/Pending kiya, to reset kar dein
+            vehicle.rcVerifiedAt = null;
+            vehicle.rcVerifiedBy = null;
+        }
+
+        await vehicle.save();
+
+        return ok(res, vehicle, `RC check status updated to ${rcCheck}`);
+    } catch (err) {
+        next(err);
+    }
+};

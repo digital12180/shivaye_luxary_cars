@@ -7,6 +7,7 @@ import {
     signRefreshToken,
     verifyRefreshToken,
 } from "../utils/jwt.js";
+import { sendForgotPasswordEmail } from "../services/email.service.js";
 
 const cookieOpts = {
     httpOnly: true,
@@ -168,7 +169,9 @@ export const forgotPassword = async (req, res, next) => {
         user.passwordResetExpires = Date.now() + 15 * 60 * 1000;
         await user.save();
         console.log("ltoken---", rawToken);
-        // TODO: send reset link via email — `${process.env.CLIENT_URL}/reset-password/${rawToken}`
+        sendForgotPasswordEmail(user.email, rawToken, user.name || "User").catch(
+            (err) => console.error("Forgot password email failed:", err.message)
+        );
 
         return ok(res, {}, "If email exists, reset link sent");
     } catch (err) {

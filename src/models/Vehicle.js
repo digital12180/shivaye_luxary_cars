@@ -14,12 +14,20 @@ const vehicleSchema = new mongoose.Schema(
             default: null,
             index: true,
         },
-
         rcCheck: {
             type: String,
             enum: ["Not checked", "Verified", "Pending"],
             default: "Not checked",
             index: true,
+        },
+        rcVerifiedAt: {
+            type: Date,
+            default: null,
+        },
+        rcVerifiedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            default: null,
         },
         brand: { type: String, required: true, trim: true, index: true },
         categoryRef: {

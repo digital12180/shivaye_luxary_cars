@@ -14,6 +14,7 @@ import {
     getVehicleSale,
     getVehicleHistory,
     getVehicleCTA,
+    updateRcCheckStatus
 } from "../controllers/vehicle.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 import { upload } from "../middleware/upload.middleware.js";
@@ -74,4 +75,11 @@ router.delete("/:id", verifyJWT, restrictTo("admin", "sales_manager"), deleteVeh
 router.get("/:id/sale", verifyJWT, restrictTo("admin", "sales_manager", "sales_executive"), getVehicleSale);
 router.get("/:id/history", verifyJWT, restrictTo("admin", "sales_manager", "sales_executive"), getVehicleHistory);
 
+
+router.patch(
+    "/:id/rc-check",
+    verifyJWT,
+    restrictTo("admin", "sales_manager", "sales_executive"),
+    updateRcCheckStatus
+);
 export default router;
