@@ -12,6 +12,10 @@ const generateStockId = async () => {
 
 /* ============================================================
    PUBLIC — GET /api/v1/vehicles
+Sort: Most recent	GET /api/v1/vehicles?sort=recent
+Sort: Name A-Z	GET /api/v1/vehicles?sort=name_asc
+Sort: Price low-high	GET /api/v1/vehicles?sort=price_low_high
+Filter by RC Status	GET /api/v1/vehicles?rcCheck=Verified
    ============================================================ */
 export const listVehicles = async (req, res, next) => {
     try {
@@ -22,13 +26,16 @@ export const listVehicles = async (req, res, next) => {
             fuelType, transmission, bodyType,
             minPrice, maxPrice, minYear, maxYear,
             maxKilometers, status, featured,
-            brandRef, categoryRef,
-            sortBy = "-createdAt",
+            brandRef, categoryRef, rcCheck, // ✅ Added rcCheck
+            sort, // ✅ Changed sortBy to 'sort' to match standard UI query
         } = req.query;
 
         const filter = { isPublished: true };
+
+        // Frontend default is "All statuses", so if not provided, show active ones
         filter.status = status ? status : { $in: ["Available", "Reserved", "Booked", "Sold"] };
 
+        // Basic filters
         if (brand) filter.brand = new RegExp(`^${brand}$`, "i");
         if (brandRef) filter.brandRef = brandRef;
         if (categoryRef) filter.categoryRef = categoryRef;
@@ -39,6 +46,10 @@ export const listVehicles = async (req, res, next) => {
         if (bodyType) filter.bodyType = bodyType;
         if (featured === "true") filter.featured = true;
 
+        // ✅ RC Check Filter (Not checked / Verified)
+        if (rcCheck) filter.rcCheck = rcCheck;
+
+        // Price & Year Range
         if (minPrice || maxPrice) {
             filter.askingPrice = {};
             if (minPrice) filter.askingPrice.$gte = Number(minPrice);
@@ -51,20 +62,47 @@ export const listVehicles = async (req, res, next) => {
         }
         if (maxKilometers) filter.kilometers = { $lte: Number(maxKilometers) };
 
+        // Search filter
         if (search) {
             filter.$or = [
                 { brand: new RegExp(search, "i") },
                 { model: new RegExp(search, "i") },
                 { variant: new RegExp(search, "i") },
                 { description: new RegExp(search, "i") },
+                { stockId: new RegExp(search, "i") }, // Added stockId to search (SH-08115)
             ];
+        }
+
+        // ✅ SORTING LOGIC (Matching Frontend Dropdown)
+        let sortOptions = { createdAt: -1 }; // Default: Most recent
+
+        switch (sort) {
+            case "recent":
+                sortOptions = { createdAt: -1 };
+                break;
+            case "name_asc": // For "Sort: Name A-Z"
+                sortOptions = { brand: 1, model: 1 }; // Sort by Brand then Model
+                break;
+            case "price_low_high": // For "Sort: Price low-high"
+                sortOptions = { askingPrice: 1 };
+                break;
+
+            // Optional: If you add more options later
+            case "price_high_low":
+                sortOptions = { askingPrice: -1 };
+                break;
+            case "year_desc":
+                sortOptions = { year: -1 };
+                break;
+            default:
+                sortOptions = { createdAt: -1 };
         }
 
         const [data, total] = await Promise.all([
             Vehicle.find(filter)
                 .populate("brandRef", "name logo slug")
                 .populate("categoryRef", "name slug")
-                .sort(sortBy)
+                .sort(sortOptions) // ✅ Applied dynamic sorting here
                 .skip((page - 1) * limit)
                 .limit(limit),
             Vehicle.countDocuments(filter),

@@ -13,12 +13,20 @@ import {
     getPaymentAnalytics,
     getCampaignAnalytics,
     getFollowUpAnalytics,
+    getDashboardData,
 } from "../controllers/analytics.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 
 const router = Router();
 
 router.use(verifyJWT);
+
+router.get(
+    "/dashboard",
+    verifyJWT,
+    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager"),
+    getDashboardData
+);
 
 /* Everyone in CRM can see overview */
 router.get(

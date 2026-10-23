@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import Customer from "../models/Customer.js";
 import Vehicle from "../models/Vehicle.js";
 import { ok, fail } from "../utils/response.js";
-import {extractAttribution} from "../services/attribution.service.js";
+import { extractAttribution } from "../services/attribution.service.js";
 import { captureLocation } from "../services/geolocation.service.js";
 
 
@@ -11,17 +11,13 @@ export const publicCreateCustomer = async (req, res, next) => {
         const attribution = extractAttribution(req);
         const { location } = await captureLocation(req);
 
-        const {
-            name, email, phone, city, state,
-            source, interestedIn, notes,
-        } = req.body;
+        const { name, email, phone, city, state, source, interestedIn, notes } = req.body;
 
         if (!name || !phone) return fail(res, "Name and phone are required", 400);
 
         let customer = await Customer.findOne({ phone });
         if (customer) {
-            if (attribution?.latestTouchSource)
-                customer.attribution.latestTouchSource = attribution.latestTouchSource;
+            if (attribution?.latestTouchSource) customer.attribution.latestTouchSource = attribution.latestTouchSource;
             if (city && !customer.city) customer.city = city;
             if (state && !customer.state) customer.state = state;
             customer.lastContactedAt = new Date();
@@ -32,17 +28,12 @@ export const publicCreateCustomer = async (req, res, next) => {
         const ip = req.ip || req.headers["x-forwarded-for"] || null;
 
         customer = await Customer.create({
-            name,
-            email,
-            phone,
-            city,
-            state,
-            source: source || "direct_website",
+            name, email, phone, city, state,
+            source: source || "Website",
             attribution: attribution || {},
             interestedIn: interestedIn || "buy",
             notes,
             ipAddress: ip,
-            attribution: attribution || {},
             ipLocation: location || null,
         });
 
@@ -60,7 +51,8 @@ export const getMyProfile = async (req, res, next) => {
         if (!customer) return fail(res, "Customer not found", 404);
         return ok(res, customer);
     } catch (err) {
-        next(err);  }
+        next(err);
+    }
 };
 
 // PATCH /api/v1/customers/me
@@ -122,7 +114,7 @@ export const listCustomers = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
-        const { search, source, city, interestedIn, isActive } = req.query;
+        const { search, source, city, interestedIn, isActive, sort } = req.query;
 
         const filter = {};
         if (source) filter.source = source;
@@ -135,16 +127,39 @@ export const listCustomers = async (req, res, next) => {
                 { name: new RegExp(search, "i") },
                 { phone: new RegExp(search, "i") },
                 { email: new RegExp(search, "i") },
+                { customerNumber: new RegExp(search, "i") },
             ];
         }
 
-        const [data, total] = await Promise.all([
-            Customer.find(filter)
-                .sort("-createdAt")
-                .skip((page - 1) * limit)
-                .limit(limit),
-            Customer.countDocuments(filter),
-        ]);
+        // ✅ SORTING LOGIC
+        let sortOptions = { createdAt: -1 }; // Most recent default
+        if (sort === "recent") sortOptions = { createdAt: -1 };
+        else if (sort === "name_asc") sortOptions = { name: 1 };
+        else if (sort === "name_desc") sortOptions = { name: -1 };
+
+        const customers = await Customer.find(filter)
+            .sort(sortOptions)
+            .skip((page - 1) * limit)
+            .limit(limit)
+            .lean(); // Using lean for performance
+
+        // ✅ Attach counts (Enquiries, Appointments, Purchased Vehicle)
+        const data = await Promise.all(customers.map(async (cust) => {
+            const enquiriesCount = await Lead.countDocuments({ customer: cust._id });
+            const appointmentsCount = await Appointment.countDocuments({ customer: cust._id });
+
+            // Check if customer has purchased any vehicle
+            const purchasedVehicle = await Vehicle.findOne({ soldTo: cust._id, status: "Sold" }).select("brand model").lean();
+
+            return {
+                ...cust,
+                enquiriesCount,
+                appointmentsCount,
+                purchasedVehicle: purchasedVehicle ? `${purchasedVehicle.brand} ${purchasedVehicle.model}` : null,
+            };
+        }));
+
+        const total = await Customer.countDocuments(filter);
 
         return ok(res, {
             data,
@@ -159,12 +174,36 @@ export const listCustomers = async (req, res, next) => {
 export const getCustomer = async (req, res, next) => {
     try {
         const customer = await Customer.findById(req.params.id)
-            .populate("savedCars", "brand model year price images slug status")
+            .populate("savedCars", "brand model year askingPrice images slug status")
             .populate("createdBy", "name")
-            .populate("updatedBy", "name");
+            .populate("updatedBy", "name")
+            .lean();
 
         if (!customer) return fail(res, "Customer not found", 404);
-        return ok(res, customer);
+
+        // ✅ Fetch related counts for Record Overview
+        const [enquiriesCount, appointmentsCount, reservationsCount, purchasedVehicle, recentLeads] = await Promise.all([
+            Lead.countDocuments({ customer: customer._id }),
+            Appointment.countDocuments({ customer: customer._id }),
+            Reservation.countDocuments({ customer: customer._id }), // Assuming Reservation model exists
+            Vehicle.findOne({ soldTo: customer._id, status: "Sold" }).select("brand model year askingPrice").lean(),
+            Lead.find({ customer: customer._id })
+                .sort("-createdAt")
+                .limit(5)
+                .select("leadNumber interestedVehicle status createdAt")
+                .lean()
+        ]);
+
+        return ok(res, {
+            ...customer,
+            stats: {
+                enquiriesCount,
+                appointmentsCount,
+                reservationsCount,
+                purchasedVehicle: purchasedVehicle ? `${purchasedVehicle.brand} ${purchasedVehicle.model}` : null,
+            },
+            recentLeads // For "Customer history" timeline
+        });
     } catch (err) {
         next(err);
     }
@@ -194,7 +233,7 @@ export const createCustomer = async (req, res, next) => {
 // PATCH /api/v1/customers/:id
 export const updateCustomer = async (req, res, next) => {
     try {
-        const protectedFields = ["password", "otp", "otpExpires", "deletedAt", "savedCars"];
+        const protectedFields = ["password", "otp", "otpExpires", "deletedAt", "savedCars", "customerNumber"];
         protectedFields.forEach((f) => delete req.body[f]);
 
         const customer = await Customer.findByIdAndUpdate(

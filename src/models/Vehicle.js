@@ -14,6 +14,13 @@ const vehicleSchema = new mongoose.Schema(
             default: null,
             index: true,
         },
+
+        rcCheck: {
+            type: String,
+            enum: ["Not checked", "Verified", "Pending"],
+            default: "Not checked",
+            index: true,
+        },
         brand: { type: String, required: true, trim: true, index: true },
         categoryRef: {
             type: mongoose.Schema.Types.ObjectId,

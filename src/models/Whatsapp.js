@@ -16,7 +16,6 @@ const whatsAppMessageSchema = new mongoose.Schema(
 
         phone: { type: String, required: true, index: true },
 
-        // Optional: link to your User / Lead / Vehicle enquiry
         relatedTo: {
             model: { type: String },   // "Lead" | "User" | "Vehicle"
             id: { type: mongoose.Schema.Types.ObjectId },

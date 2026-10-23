@@ -41,6 +41,194 @@ const startOfMonth = () => {
     return d;
 };
 
+const getStartOfDay = () => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+};
+const getEndOfDay = () => {
+    const d = new Date();
+    d.setHours(23, 59, 59, 999);
+    return d;
+};
+
+
+export const getDashboardData = async (req, res, next) => {
+    try {
+        const now = new Date();
+        const todayStart = getStartOfDay();
+        const todayEnd = getEndOfDay();
+
+        // Calculate 5-day periods for the current month (for the chart)
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+        // 1. KPI Cards Data
+        const [
+            liveInventoryCount,
+            availableCars,
+            reservedCars,
+            soldCars,
+            openOpportunities,
+            newEnquiriesToday,
+            overdueFollowUps,
+            totalReservations,
+            pendingPayments,
+            salesRevenueAgg,
+            completedSalesCount,
+            totalLeadsCount
+        ] = await Promise.all([
+            // Live Inventory
+            Vehicle.countDocuments({ status: { $in: ["Available", "Reserved", "Booked"] } }),
+            Vehicle.countDocuments({ status: "Available" }),
+            Vehicle.countDocuments({ status: "Reserved" }),
+            Vehicle.countDocuments({ status: "Sold" }),
+
+            // Open Opportunities (Leads)
+            Lead.countDocuments({ status: { $nin: ["Won", "Lost"] } }),
+            Lead.countDocuments({ createdAt: { $gte: todayStart, $lte: todayEnd } }),
+            Lead.countDocuments({ status: { $nin: ["Won", "Lost"] }, nextFollowUpAt: { $lt: now } }),
+
+            // Reservations & Payments
+            Reservation.countDocuments({ status: "Confirmed" }), // Assuming Confirmed status
+            Reservation.countDocuments({ paymentStatus: "Pending" }), // Assuming Pending payment
+
+            // Sales Revenue
+            Sale.aggregate([
+                { $match: { status: "Completed" } },
+                { $group: { _id: null, total: { $sum: "$pricing.finalSalePrice" } } }
+            ]),
+            Sale.countDocuments({ status: "Completed" }),
+            Lead.countDocuments({})
+        ]);
+
+        const salesRevenue = salesRevenueAgg[0]?.total || 0;
+        const conversionRate = totalLeadsCount ? Number(((completedSalesCount / totalLeadsCount) * 100).toFixed(1)) : 0;
+
+        // 2. Lead & sale momentum (Chart Data - Grouped by 5-day periods)
+        const momentumData = await Lead.aggregate([
+            { $match: { createdAt: { $gte: startOfMonth, $lte: endOfMonth } } },
+            {
+                $group: {
+                    _id: {
+                        $subtract: [
+                            { $dayOfMonth: "$createdAt" },
+                            { $mod: [{ $subtract: [{ $dayOfMonth: "$createdAt" }, 1] }, 5] }
+                        ]
+                    },
+                    qualifiedLeads: {
+                        $sum: { $cond: [{ $in: ["$status", ["Qualified", "Test Drive", "Visit Scheduled", "Negotiation", "Reserved", "Booked", "Won"]] }, 1, 0] }
+                    }
+                }
+            },
+            { $sort: { "_id": 1 } }
+        ]);
+
+        const soldMomentum = await Sale.aggregate([
+            { $match: { saleDate: { $gte: startOfMonth, $lte: endOfMonth } } },
+            {
+                $group: {
+                    _id: {
+                        $subtract: [
+                            { $dayOfMonth: "$saleDate" },
+                            { $mod: [{ $subtract: [{ $dayOfMonth: "$saleDate" }, 1] }, 5] }
+                        ]
+                    },
+                    vehiclesSold: { $sum: 1 }
+                }
+            },
+            { $sort: { "_id": 1 } }
+        ]);
+
+        // Format chart data to match UI (1-5, 6-10, 11-15, 16-20, 21-25, 26-30/31)
+        const formattedMomentum = [
+            { period: "1-5", qualifiedLeads: 0, vehiclesSold: 0 },
+            { period: "6-10", qualifiedLeads: 0, vehiclesSold: 0 },
+            { period: "11-15", qualifiedLeads: 0, vehiclesSold: 0 },
+            { period: "16-20", qualifiedLeads: 0, vehiclesSold: 0 },
+            { period: "21-25", qualifiedLeads: 0, vehiclesSold: 0 },
+            { period: "26-31", qualifiedLeads: 0, vehiclesSold: 0 },
+        ];
+
+        momentumData.forEach(item => {
+            if (item._id <= 5) formattedMomentum[0].qualifiedLeads = item.qualifiedLeads;
+            else if (item._id <= 10) formattedMomentum[1].qualifiedLeads = item.qualifiedLeads;
+            else if (item._id <= 15) formattedMomentum[2].qualifiedLeads = item.qualifiedLeads;
+            else if (item._id <= 20) formattedMomentum[3].qualifiedLeads = item.qualifiedLeads;
+            else if (item._id <= 25) formattedMomentum[4].qualifiedLeads = item.qualifiedLeads;
+            else formattedMomentum[5].qualifiedLeads = item.qualifiedLeads;
+        });
+
+        soldMomentum.forEach(item => {
+            if (item._id <= 5) formattedMomentum[0].vehiclesSold = item.vehiclesSold;
+            else if (item._id <= 10) formattedMomentum[1].vehiclesSold = item.vehiclesSold;
+            else if (item._id <= 15) formattedMomentum[2].vehiclesSold = item.vehiclesSold;
+            else if (item._id <= 20) formattedMomentum[3].vehiclesSold = item.vehiclesSold;
+            else if (item._id <= 25) formattedMomentum[4].vehiclesSold = item.vehiclesSold;
+            else formattedMomentum[5].vehiclesSold = item.vehiclesSold;
+        });
+
+        // 3. Enquiry Sources (Bar Chart Data)
+        const enquirySources = await Lead.aggregate([
+            { $group: { _id: "$source", count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: 6 } // Show top 6 sources like screenshot
+        ]);
+
+        // 4. Latest Opportunities (Recent Leads Table)
+        const latestOpportunities = await Lead.find()
+            .sort("-createdAt")
+            .limit(5)
+            .populate("customer", "name customerNumber")
+            .populate("assignedTo", "name")
+            .select("interestedVehicle status customer assignedTo createdAt")
+            .lean();
+
+        // 5. Showroom Activity (Recent Activities)
+        const showroomActivity = await Lead.find()
+            .sort("-updatedAt")
+            .limit(4)
+            .populate("customer", "name")
+            .select("status customer updatedAt")
+            .lean();
+
+        // Return structured response exactly as frontend needs
+        return ok(res, {
+            kpis: {
+                liveInventory: {
+                    total: liveInventoryCount,
+                    available: availableCars,
+                    reserved: reservedCars,
+                    sold: soldCars,
+                },
+                openOpportunities: {
+                    total: openOpportunities,
+                    newEnquiries: newEnquiriesToday,
+                    overdueFollowUps: overdueFollowUps,
+                },
+                reservations: {
+                    total: totalReservations,
+                    pendingPayments: pendingPayments,
+                },
+                salesRevenue: {
+                    total: salesRevenue,
+                    completedSales: completedSalesCount,
+                    conversionRate: conversionRate,
+                }
+            },
+            chartData: {
+                momentum: formattedMomentum,
+                enquirySources: enquirySources,
+            },
+            latestOpportunities,
+            showroomActivity
+        });
+
+    } catch (err) {
+        next(err);
+    }
+};
+
 /* ============================================================
    BRD 34.1 — Management Overview KPIs
    GET /api/v1/analytics/overview

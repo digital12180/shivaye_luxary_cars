@@ -32,14 +32,14 @@ router.delete("/me/saved-cars/:vehicleId", verifyCustomerJWT, removeSavedCar);
 router.get(
     "/stats/summary",
     verifyJWT,
-    restrictTo("admin", "sales_manager", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "marketing_manager","hr"),
     getCustomerStats
 );
 
 router.get(
     "/",
     verifyJWT,
-    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager"),
+    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager", "hr"),
     listCustomers
 );
 
