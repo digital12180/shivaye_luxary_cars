@@ -76,7 +76,7 @@ export const login = async (req, res, next) => {
 
         return res
             .status(200)
-            .cookie("accessToken", accessToken, { ...cookieOpts, maxAge: 15 * 60 * 1000 })
+            .cookie("accessToken", accessToken, { ...cookieOpts, maxAge: 10 * 60 * 1000 })
             .cookie("refreshToken", refreshToken, { ...cookieOpts, maxAge: 7 * 24 * 60 * 60 * 1000 })
             .json({
                 success: true,
@@ -105,6 +105,8 @@ export const logout = async (req, res, next) => {
 // POST /api/v1/auth/refresh-token
 export const refreshToken = async (req, res, next) => {
     try {
+
+        console.log("refresh token called",req.cookies?.refreshToken);
         const token = req.cookies?.refreshToken || req.body.refreshToken;
         if (!token) return fail(res, "Refresh token missing", 401);
 

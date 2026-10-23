@@ -17,16 +17,12 @@ const whatsAppMessageSchema = new mongoose.Schema(
         phone: { type: String, required: true, index: true },
 
         relatedTo: {
-            model: { type: String },   // "Lead" | "User" | "Vehicle"
+            model: { type: String },
             id: { type: mongoose.Schema.Types.ObjectId },
         },
-
-        // Outbound specifics
         templateName: { type: String, default: null },
         language: { type: String, default: "en" },
         variables: { type: Object, default: {} },
-
-        // Body text (for text messages or inbound)
         body: { type: String, default: null },
 
         // WABA message ID (from Meta) — used for status updates

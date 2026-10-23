@@ -79,8 +79,6 @@ const appointmentSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-
-    // ✅ NEW: Separate time string (e.g., "12:30 PM")
     time: { type: String, trim: true },
 
     durationMinutes: { type: Number, default: 30, min: 15 },
@@ -106,8 +104,6 @@ const appointmentSchema = new mongoose.Schema(
       fbclid: { type: String, default: null },
       landingPage: { type: String, default: null },
     },
-
-    // ✅ "Visit notes" from UI
     notes: { type: String, trim: true },
 
     cancelledAt: { type: Date, default: null },

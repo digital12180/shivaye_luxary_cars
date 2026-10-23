@@ -68,12 +68,6 @@ export const getNotification = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   CRM — Send a custom notification (manual / ad-hoc)
-   POST /api/v1/notifications
-   Body: { recipientType, customerId?, userId?, to, channel, type,
-           title, body, template?, priority?, relatedTo?, actionUrl? }
-   ============================================================ */
 export const createNotification = async (req, res, next) => {
     try {
         const {

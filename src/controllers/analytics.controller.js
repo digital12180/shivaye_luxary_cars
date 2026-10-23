@@ -1,4 +1,3 @@
-import mongoose from "mongoose";
 import Lead from "../models/Lead.js";
 import LeadActivity from "../models/leadActivity.js";
 import Vehicle from "../models/Vehicle.js";
@@ -34,13 +33,6 @@ const endOfDay = () => {
     d.setHours(23, 59, 59, 999);
     return d;
 };
-const startOfMonth = () => {
-    const d = new Date();
-    d.setDate(1);
-    d.setHours(0, 0, 0, 0);
-    return d;
-};
-
 const getStartOfDay = () => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
