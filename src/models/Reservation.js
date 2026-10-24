@@ -2,27 +2,12 @@ import mongoose from "mongoose";
 
 const refundRequestSchema = new mongoose.Schema(
     {
-        // Who initiated
-        requestedBy: {
-            type: String,
-            enum: ["customer", "staff", "system"],
-            required: true,
-        },
+        requestedBy: { type: String, enum: ["customer", "staff", "system"], required: true },
         requestedAt: { type: Date, default: Date.now },
-
-        // Which scenario is this refund for
-        scenario: {
-            type: String,
-            enum: ["physical_inspection", "no_visit_email"],  // A or B
-            required: true,
-        },
-
-        // Reason from customer / staff
+        scenario: { type: String, enum: ["physical_inspection", "no_visit_email"], required: true },
         reason: { type: String, trim: true },
-        customerEmail: { type: String, trim: true },       // for scenario B
-        customerMessage: { type: String, trim: true },     // for scenario B
-
-        // Approval state (only for scenario B)
+        customerEmail: { type: String, trim: true },
+        customerMessage: { type: String, trim: true },
         status: {
             type: String,
             enum: ["auto_approved", "pending_review", "approved", "rejected", "processed"],
@@ -32,15 +17,9 @@ const refundRequestSchema = new mongoose.Schema(
         reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
         reviewedAt: { type: Date, default: null },
         reviewNotes: { type: String, trim: true },
-
-        // Refund execution
         refundAmount: { type: Number, default: 0, min: 0 },
-        refundId: { type: String, default: null },         // Razorpay refund ID
-        refundMethod: {
-            type: String,
-            enum: ["original_payment", "bank_transfer", "manual", null],
-            default: null,
-        },
+        refundId: { type: String, default: null },
+        refundMethod: { type: String, enum: ["original_payment", "bank_transfer", "manual", null], default: null },
         processedAt: { type: Date, default: null },
         processedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     },
@@ -58,42 +37,31 @@ const reservationSchema = new mongoose.Schema(
             index: true,
         },
 
-        /* ============ References ============ */
+        /* ============ References (Optional now, for manual inputs) ============ */
         customer: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Customer",
-            required: true,
+            default: null, // ✅ Not always required if manual
             index: true,
         },
 
         vehicle: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Vehicle",
-            required: true,
+            default: null, // ✅ Not always required if manual
             index: true,
         },
 
-        lead: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "Lead",
-            default: null,
-            index: true,
-        },
+        // ✅ NEW: Manual Text Inputs (Screenshot ke liye)
+        customerName: { type: String, trim: true },
+        customerPhone: { type: String, trim: true },
+        vehicleName: { type: String, trim: true },
 
-        campaign: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "Campaign",
-            default: null,
-        },
+        lead: { type: mongoose.Schema.Types.ObjectId, ref: "Lead", default: null, index: true },
+        campaign: { type: mongoose.Schema.Types.ObjectId, ref: "Campaign", default: null },
+        assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null, index: true },
 
-        assignedTo: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "User",
-            default: null,
-            index: true,
-        },
-
-        /* ============ Frozen Snapshots ============ */
+        /* ============ Frozen Snapshots (Optional now) ============ */
         vehicleSnapshot: {
             stockId: { type: String, default: null },
             brand: { type: String, trim: true },
@@ -122,38 +90,49 @@ const reservationSchema = new mongoose.Schema(
         },
 
         /* ============ Money ============ */
-        reservationAmount: { type: Number, required: true, min: 0 },
+        // ✅ UPDATED: "Deposit (INR)" from Screenshot
+        depositAmount: { type: Number, required: true, min: 0 },
+        reservationAmount: { type: Number, min: 0 }, // Kept for backward compatibility
         amountPaid: { type: Number, default: 0, min: 0 },
         amountDue: { type: Number, default: 0, min: 0 },
 
-        paymentStatus: {
+        // ✅ UPDATED: "Payment Check" from Screenshot
+        paymentCheck: {
+            type: String,
+            enum: ["Pending", "Received - simulated", "Failed"],
+            default: "Pending",
+            index: true,
+        },
+
+        paymentStatus: { // Kept for backward compatibility
             type: String,
             enum: ["pending", "partial", "paid", "refunded", "failed"],
             default: "pending",
             index: true,
         },
 
-        payment: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "Payment",
-            default: null,
-        },
+        // ✅ NEW: "Transaction reference"
+        transactionReference: { type: String, trim: true, default: null },
 
+        // ✅ NEW: "Cancellation / refund"
+        cancellationRefund: { type: String, trim: true, default: null },
+
+        payment: { type: mongoose.Schema.Types.ObjectId, ref: "Payment", default: null },
         currency: { type: String, default: "INR" },
 
         /* ============ Status ============ */
+        // ✅ UPDATED: Status Enum from Screenshot
         status: {
             type: String,
             enum: [
-                "initiated",
-                "pending",
-                "confirmed",
-                "cancelled",
-                "completed",
-                "expired",
-                "refunded",
+                "Active",
+                "Converted",
+                "Cancelled",
+                "Expired",
+                "Completed",
+                "Refunded",
             ],
-            default: "initiated",
+            default: "Active",
             index: true,
         },
 
@@ -163,6 +142,8 @@ const reservationSchema = new mongoose.Schema(
         extendedAt: { type: Date, default: null },
 
         /* ============ Timestamps ============ */
+        // ✅ NEW: Reservation Date from Screenshot
+        reservationDate: { type: Date, default: Date.now, index: true },
         confirmedAt: { type: Date, default: null },
         cancelledAt: { type: Date, default: null },
         convertedAt: { type: Date, default: null },
@@ -173,46 +154,24 @@ const reservationSchema = new mongoose.Schema(
         cancellationReason: { type: String, trim: true, default: null },
         cancellationCategory: {
             type: String,
-            enum: [
-                "customer_request",
-                "payment_failed",
-                "vehicle_unavailable",
-                "expired",
-                "price_negotiation_failed",
-                "other",
-                null,
-            ],
+            enum: ["customer_request", "payment_failed", "vehicle_unavailable", "expired", "price_negotiation_failed", "other", null],
             default: null,
         },
-        cancelledBy: {
-            type: String,
-            enum: ["customer", "staff", "system", null],
-            default: null,
-        },
+        cancelledBy: { type: String, enum: ["customer", "staff", "system", null], default: null },
 
         /* ============ Conversion ============ */
-        convertedToSale: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "Sale",
-            default: null,
-        },
+        convertedToSale: { type: mongoose.Schema.Types.ObjectId, ref: "Sale", default: null },
 
         /* ============ Source & Consent ============ */
         source: {
             type: String,
-            enum: [
-                "google_ads", "facebook_ads", "instagram", "organic",
-                "direct_website", "whatsapp", "phone", "walk_in",
-                "referral", "manual", "other",
-            ],
-            default: "direct_website",
+            enum: ["google_ads", "facebook_ads", "instagram", "organic", "direct_website", "whatsapp", "phone", "walk_in", "referral", "manual", "other"],
+            default: "manual",
         },
 
         termsAccepted: { type: Boolean, default: false },
         termsAcceptedAt: { type: Date, default: null },
-
         notes: { type: String, trim: true },
-
         isActive: { type: Boolean, default: true, index: true },
 
         /* ============ Audit ============ */
@@ -224,22 +183,10 @@ const reservationSchema = new mongoose.Schema(
 );
 
 /* ============ Indexes ============ */
-reservationSchema.index({ status: 1, paymentStatus: 1 });
+reservationSchema.index({ status: 1, paymentCheck: 1 });
 reservationSchema.index({ customer: 1, status: 1 });
 reservationSchema.index({ vehicle: 1, status: 1 });
 reservationSchema.index({ createdAt: -1 });
-
-/* Prevent double active reservation on same vehicle */
-reservationSchema.index(
-    { vehicle: 1 },
-    {
-        unique: true,
-        partialFilterExpression: {
-            status: { $in: ["initiated", "pending", "confirmed"] },
-            deletedAt: null,
-        },
-    }
-);
 
 /* Soft delete */
 reservationSchema.pre(/^find/, function () {
@@ -248,7 +195,8 @@ reservationSchema.pre(/^find/, function () {
 
 /* Auto amountDue */
 reservationSchema.pre("save", function () {
-    this.amountDue = Math.max(0, (this.reservationAmount || 0) - (this.amountPaid || 0));
+    const total = this.depositAmount || this.reservationAmount || 0;
+    this.amountDue = Math.max(0, total - (this.amountPaid || 0));
 });
 
 export default mongoose.model("Reservation", reservationSchema);

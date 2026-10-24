@@ -177,27 +177,32 @@ export const listSales = async (req, res, next) => {
         const {
             paymentStatus, salesExecutive, brand, source,
             deliveryStatus, fromDate, toDate, search,
+            sort, // ✅ Added sort query param
         } = req.query;
 
         const filter = {};
 
+        // Role-based filtering
         if (req.user.role === "sales_executive") {
             filter.salesExecutive = req.user._id;
         } else if (salesExecutive) {
             filter.salesExecutive = salesExecutive;
         }
 
+        // Other filters
         if (paymentStatus) filter["pricing.paymentStatus"] = paymentStatus;
         if (brand) filter["vehicleSnapshot.brand"] = new RegExp(brand, "i");
         if (source) filter.source = source;
         if (deliveryStatus) filter.deliveryStatus = deliveryStatus;
 
+        // Date Range Filter
         if (fromDate || toDate) {
             filter.saleDate = {};
             if (fromDate) filter.saleDate.$gte = new Date(fromDate);
             if (toDate) filter.saleDate.$lte = new Date(toDate);
         }
 
+        // ✅ Search Filter (Customer Name, Vehicle, Stock ID, Invoice)
         if (search) {
             filter.$or = [
                 { invoiceNumber: new RegExp(search, "i") },
@@ -209,13 +214,33 @@ export const listSales = async (req, res, next) => {
             ];
         }
 
+        // ✅ SORTING LOGIC (Based on Screenshot Dropdown)
+        let sortOptions = { saleDate: -1 }; // Default: Most recent
+
+        switch (sort) {
+            case "recent":
+                sortOptions = { saleDate: -1 };
+                break;
+            case "name_asc": // Sort by Buyer Name A-Z
+                sortOptions = { "buyerSnapshot.name": 1 };
+                break;
+            case "price_low_high":
+                sortOptions = { "pricing.finalSalePrice": 1 };
+                break;
+            case "price_high_low":
+                sortOptions = { "pricing.finalSalePrice": -1 };
+                break;
+            default:
+                sortOptions = { saleDate: -1 };
+        }
+
         const [data, total] = await Promise.all([
             Sale.find(filter)
                 .populate("vehicle", "stockId brand model year images slug status")
-                .populate("customer", "name phone email city")
+                .populate("customer", "name phone email city customerNumber")
                 .populate("salesExecutive", "name email role")
                 .populate("lead", "status source")
-                .sort("-saleDate")
+                .sort(sortOptions) // ✅ Applied dynamic sorting
                 .skip((page - 1) * limit)
                 .limit(limit),
             Sale.countDocuments(filter),

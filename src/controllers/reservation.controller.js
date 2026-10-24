@@ -12,6 +12,10 @@ import { sendNotification } from "../services/notification.service.js";
 import { extractAttribution } from "../services/attribution.service.js";
 import { notifyReservationConfirmed } from "../services/notification.service.js"
 
+const generateReservationNumber = async () => {
+    const count = await Reservation.countDocuments();
+    return `RS-${String(count + 7600).padStart(4, "0")}`; // Starts from RS-7600
+};
 
 export const expireStaleReservations = async () => {
     const now = new Date();
@@ -138,14 +142,6 @@ export const startReservationExpiryJob = () => {
     );
 
     console.log(`[Cron] Reservation expiry job scheduled: ${schedule}`);
-};
-/* ============================================================
-   Helper — generate reservation number
-   ============================================================ */
-const generateReservationNumber = async () => {
-    const year = new Date().getFullYear();
-    const count = await Reservation.countDocuments();
-    return `RSV-${year}-${String(count + 1).padStart(5, "0")}`;
 };
 
 /* ============================================================
@@ -300,6 +296,75 @@ export const publicCreateReservation = async (req, res, next) => {
     }
 };
 
+export const createReservationManual = async (req, res, next) => {
+    try {
+        const {
+            customer: customerId, customerName, customerPhone,
+            vehicle: vehicleId, vehicleName,
+            reservationDate, depositAmount, paymentCheck,
+            status, transactionReference, cancellationRefund
+        } = req.body;
+
+        /* 1. Resolve Customer */
+        let customer = null;
+        if (customerId && mongoose.isValidObjectId(customerId)) {
+            customer = await Customer.findById(customerId);
+        } else if (customerName) {
+            customer = await Customer.findOne({ phone: customerPhone || "temp" });
+            if (!customer) {
+                customer = await Customer.create({
+                    name: customerName,
+                    phone: customerPhone || `temp-${Date.now()}`,
+                    source: "manual",
+                });
+            }
+        }
+
+        /* 2. Resolve Vehicle */
+        let vehicle = null;
+        if (vehicleId && mongoose.isValidObjectId(vehicleId)) {
+            vehicle = await Vehicle.findById(vehicleId);
+        }
+
+        /* 3. Create Reservation */
+        const reservation = await Reservation.create({
+            reservationNumber: await generateReservationNumber(),
+            customer: customer?._id || null,
+            customerName: customerName || customer?.name,
+            customerPhone: customerPhone || customer?.phone,
+
+            vehicle: vehicle?._id || null,
+            vehicleName: vehicleName || (vehicle ? `${vehicle.brand} ${vehicle.model}` : null),
+
+            depositAmount: Number(depositAmount),
+            reservationAmount: Number(depositAmount), // For backward compatibility
+
+            paymentCheck: paymentCheck || "Pending",
+            status: status || "Active",
+            transactionReference,
+            cancellationRefund,
+
+            reservationDate: reservationDate ? new Date(reservationDate) : new Date(),
+
+            createdBy: req.user._id,
+            updatedBy: req.user._id,
+        });
+
+        // If vehicle is attached, mark it as reserved
+        if (vehicle) {
+            vehicle.status = "Reserved";
+            vehicle.reservedAt = new Date();
+            await vehicle.save();
+        }
+
+        return ok(res, reservation, "Reservation created successfully", 201);
+    } catch (err) {
+        next(err);
+    }
+};
+
+
+
 /* ============================================================
    CRM — List reservations
    GET /api/v1/reservations
@@ -309,8 +374,8 @@ export const listReservations = async (req, res, next) => {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
         const {
-            status, paymentStatus, assignedTo, customer, vehicle,
-            fromDate, toDate, expiringSoon,
+            status, paymentCheck, assignedTo, customer, vehicle,
+            fromDate, toDate, expiringSoon, search, sort,
         } = req.query;
 
         const filter = {};
@@ -321,31 +386,46 @@ export const listReservations = async (req, res, next) => {
             filter.assignedTo = assignedTo;
         }
 
+        // ✅ Filters
         if (status) filter.status = status;
-        if (paymentStatus) filter.paymentStatus = paymentStatus;
+        if (paymentCheck) filter.paymentCheck = paymentCheck;
         if (customer) filter.customer = customer;
         if (vehicle) filter.vehicle = vehicle;
 
         if (fromDate || toDate) {
-            filter.createdAt = {};
-            if (fromDate) filter.createdAt.$gte = new Date(fromDate);
-            if (toDate) filter.createdAt.$lte = new Date(toDate);
+            filter.reservationDate = {};
+            if (fromDate) filter.reservationDate.$gte = new Date(fromDate);
+            if (toDate) filter.reservationDate.$lte = new Date(toDate);
         }
 
         if (expiringSoon === "true") {
             const in24h = new Date(Date.now() + 24 * 60 * 60 * 1000);
             filter.expiresAt = { $lte: in24h, $gte: new Date() };
-            filter.status = { $in: ["initiated", "pending"] };
+            filter.status = "Active";
         }
+
+        // ✅ Search
+        if (search) {
+            filter.$or = [
+                { reservationNumber: new RegExp(search, "i") },
+                { customerName: new RegExp(search, "i") },
+                { vehicleName: new RegExp(search, "i") },
+                { transactionReference: new RegExp(search, "i") },
+            ];
+        }
+
+        // ✅ SORTING LOGIC
+        let sortOptions = { createdAt: -1 }; // Default: Most recent
+        if (sort === "recent") sortOptions = { createdAt: -1 };
+        else if (sort === "deposit_low_high") sortOptions = { depositAmount: 1 };
+        else if (sort === "deposit_high_low") sortOptions = { depositAmount: -1 };
 
         const [data, total] = await Promise.all([
             Reservation.find(filter)
                 .populate("customer", "name phone email city")
-                .populate("vehicle", "stockId brand model year price images slug status")
-                .populate("lead", "status source")
+                .populate("vehicle", "stockId brand model year askingPrice images slug status")
                 .populate("assignedTo", "name email role")
-                .populate("payment", "status gateway amount")
-                .sort("-createdAt")
+                .sort(sortOptions)
                 .skip((page - 1) * limit)
                 .limit(limit),
             Reservation.countDocuments(filter),
@@ -827,13 +907,13 @@ import Razorpay from "razorpay";  // top of file
 
 let razorpayClient = null;
 const getRazorpay = () => {
-  if (!razorpayClient) {
-    razorpayClient = new Razorpay({
-      key_id: process.env.RAZORPAY_KEY_ID,
-      key_secret: process.env.RAZORPAY_KEY_SECRET,
-    });
-  }
-  return razorpayClient;
+    if (!razorpayClient) {
+        razorpayClient = new Razorpay({
+            key_id: process.env.RAZORPAY_KEY_ID,
+            key_secret: process.env.RAZORPAY_KEY_SECRET,
+        });
+    }
+    return razorpayClient;
 };
 
 /* ============================================================
@@ -842,118 +922,118 @@ const getRazorpay = () => {
    Body: { refundMethod?: "original_payment" | "bank_transfer" | "manual" }
    ============================================================ */
 export const processRefundRequest = async (req, res, next) => {
-  try {
-    const reservation = await Reservation.findById(req.params.id);
-    if (!reservation) return fail(res, "Reservation not found", 404);
-    if (!reservation.refundRequest) {
-      return fail(res, "No refund request found", 404);
-    }
-
-    const rf = reservation.refundRequest;
-
-    // Can only process auto_approved (Scenario A) or approved (Scenario B)
-    if (!["auto_approved", "approved"].includes(rf.status)) {
-      return fail(res, `Cannot process refund with status: ${rf.status}`, 400);
-    }
-
-    // Get the original payment
-    const payment = await Payment.findOne({
-      reservation: reservation._id,
-      status: "paid",
-    }).sort("-paidAt");
-
-    if (!payment) return fail(res, "No successful payment found for this reservation", 404);
-    if (!payment.gatewayPaymentId) {
-      return fail(res, "Payment has no Razorpay payment ID", 400);
-    }
-
-    // Call Razorpay refund
-    const rzp = getRazorpay();
-    let rzRefund;
     try {
-      rzRefund = await rzp.payments.refund(payment.gatewayPaymentId, {
-        amount: Math.round(rf.refundAmount * 100),   // paise
-        notes: {
-          reservationId: String(reservation._id),
-          reservationNumber: reservation.reservationNumber,
-          scenario: rf.scenario,
-          reviewNotes: rf.reviewNotes || "",
-        },
-      });
-    } catch (rzErr) {
-      console.error("Razorpay refund error:", rzErr.message);
-      return fail(res, `Payment gateway refund failed: ${rzErr.message}`, 400);
+        const reservation = await Reservation.findById(req.params.id);
+        if (!reservation) return fail(res, "Reservation not found", 404);
+        if (!reservation.refundRequest) {
+            return fail(res, "No refund request found", 404);
+        }
+
+        const rf = reservation.refundRequest;
+
+        // Can only process auto_approved (Scenario A) or approved (Scenario B)
+        if (!["auto_approved", "approved"].includes(rf.status)) {
+            return fail(res, `Cannot process refund with status: ${rf.status}`, 400);
+        }
+
+        // Get the original payment
+        const payment = await Payment.findOne({
+            reservation: reservation._id,
+            status: "paid",
+        }).sort("-paidAt");
+
+        if (!payment) return fail(res, "No successful payment found for this reservation", 404);
+        if (!payment.gatewayPaymentId) {
+            return fail(res, "Payment has no Razorpay payment ID", 400);
+        }
+
+        // Call Razorpay refund
+        const rzp = getRazorpay();
+        let rzRefund;
+        try {
+            rzRefund = await rzp.payments.refund(payment.gatewayPaymentId, {
+                amount: Math.round(rf.refundAmount * 100),   // paise
+                notes: {
+                    reservationId: String(reservation._id),
+                    reservationNumber: reservation.reservationNumber,
+                    scenario: rf.scenario,
+                    reviewNotes: rf.reviewNotes || "",
+                },
+            });
+        } catch (rzErr) {
+            console.error("Razorpay refund error:", rzErr.message);
+            return fail(res, `Payment gateway refund failed: ${rzErr.message}`, 400);
+        }
+
+        // Update refund request
+        rf.status = "processed";
+        rf.refundId = rzRefund.id;
+        rf.refundMethod = req.body.refundMethod || "original_payment";
+        rf.processedAt = new Date();
+        rf.processedBy = req.user._id;
+
+        // Update reservation
+        reservation.status = "refunded";
+        reservation.paymentStatus = "refunded";
+        reservation.refundedAt = new Date();
+        reservation.updatedBy = req.user._id;
+        await reservation.save();
+
+        // Update Payment record
+        payment.refund = {
+            refundId: rzRefund.id,
+            amount: rf.refundAmount,
+            reason: rf.reason || "Customer refund request",
+            status: rzRefund.status === "processed" ? "processed" : "pending",
+            initiatedAt: new Date(),
+            processedAt: rzRefund.status === "processed" ? new Date() : null,
+            initiatedBy: req.user._id,
+        };
+        if (rf.refundAmount === payment.amount) {
+            payment.status = "refunded";
+            payment.refundedAt = new Date();
+        }
+        await payment.save();
+
+        // Free up the vehicle
+        await Vehicle.findByIdAndUpdate(reservation.vehicle, {
+            status: "available",
+            reservedAt: null,
+            updatedBy: req.user._id,
+        });
+
+        // Notify customer
+        const customer = await Customer.findById(reservation.customer);
+        if (customer) {
+            await sendNotification({
+                recipientType: "customer",
+                customerId: customer._id,
+                to: customer.phone,
+                channel: "whatsapp",
+                type: "payment_refund",
+                title: "Refund processed",
+                body: `Hi ${customer.name}, your refund of ₹${rf.refundAmount} for reservation ${reservation.reservationNumber} has been processed. It will reflect in 3-5 business days.`,
+                relatedTo: {
+                    reservation: reservation._id,
+                    payment: payment._id,
+                },
+            });
+        }
+
+        return ok(
+            res,
+            {
+                reservationId: reservation._id,
+                reservationNumber: reservation.reservationNumber,
+                refundAmount: rf.refundAmount,
+                refundId: rzRefund.id,
+                status: "processed",
+            },
+            "Refund processed successfully"
+        );
+    } catch (err) {
+        next(err);
     }
-
-    // Update refund request
-    rf.status = "processed";
-    rf.refundId = rzRefund.id;
-    rf.refundMethod = req.body.refundMethod || "original_payment";
-    rf.processedAt = new Date();
-    rf.processedBy = req.user._id;
-
-    // Update reservation
-    reservation.status = "refunded";
-    reservation.paymentStatus = "refunded";
-    reservation.refundedAt = new Date();
-    reservation.updatedBy = req.user._id;
-    await reservation.save();
-
-    // Update Payment record
-    payment.refund = {
-      refundId: rzRefund.id,
-      amount: rf.refundAmount,
-      reason: rf.reason || "Customer refund request",
-      status: rzRefund.status === "processed" ? "processed" : "pending",
-      initiatedAt: new Date(),
-      processedAt: rzRefund.status === "processed" ? new Date() : null,
-      initiatedBy: req.user._id,
-    };
-    if (rf.refundAmount === payment.amount) {
-      payment.status = "refunded";
-      payment.refundedAt = new Date();
-    }
-    await payment.save();
-
-    // Free up the vehicle
-    await Vehicle.findByIdAndUpdate(reservation.vehicle, {
-      status: "available",
-      reservedAt: null,
-      updatedBy: req.user._id,
-    });
-
-    // Notify customer
-    const customer = await Customer.findById(reservation.customer);
-    if (customer) {
-      await sendNotification({
-        recipientType: "customer",
-        customerId: customer._id,
-        to: customer.phone,
-        channel: "whatsapp",
-        type: "payment_refund",
-        title: "Refund processed",
-        body: `Hi ${customer.name}, your refund of ₹${rf.refundAmount} for reservation ${reservation.reservationNumber} has been processed. It will reflect in 3-5 business days.`,
-        relatedTo: {
-          reservation: reservation._id,
-          payment: payment._id,
-        },
-      });
-    }
-
-    return ok(
-      res,
-      {
-        reservationId: reservation._id,
-        reservationNumber: reservation.reservationNumber,
-        refundAmount: rf.refundAmount,
-        refundId: rzRefund.id,
-        status: "processed",
-      },
-      "Refund processed successfully"
-    );
-  } catch (err) {
-    next(err);
-  }
 };
 
 /* ============================================================
@@ -961,25 +1041,25 @@ export const processRefundRequest = async (req, res, next) => {
    GET /api/v1/reservations/:id/refund
    ============================================================ */
 export const getRefundRequest = async (req, res, next) => {
-  try {
-    const reservation = await Reservation.findById(req.params.id)
-      .select("reservationNumber buyerSnapshot refundRequest status paymentStatus refundedAt")
-      .populate("refundRequest.reviewedBy", "name role")
-      .populate("refundRequest.processedBy", "name role");
+    try {
+        const reservation = await Reservation.findById(req.params.id)
+            .select("reservationNumber buyerSnapshot refundRequest status paymentStatus refundedAt")
+            .populate("refundRequest.reviewedBy", "name role")
+            .populate("refundRequest.processedBy", "name role");
 
-    if (!reservation) return fail(res, "Reservation not found", 404);
-    if (!reservation.refundRequest) {
-      return ok(res, null, "No refund request found");
+        if (!reservation) return fail(res, "Reservation not found", 404);
+        if (!reservation.refundRequest) {
+            return ok(res, null, "No refund request found");
+        }
+
+        return ok(res, {
+            reservationNumber: reservation.reservationNumber,
+            buyer: reservation.buyerSnapshot,
+            refund: reservation.refundRequest,
+            reservationStatus: reservation.status,
+            refundedAt: reservation.refundedAt,
+        });
+    } catch (err) {
+        next(err);
     }
-
-    return ok(res, {
-      reservationNumber: reservation.reservationNumber,
-      buyer: reservation.buyerSnapshot,
-      refund: reservation.refundRequest,
-      reservationStatus: reservation.status,
-      refundedAt: reservation.refundedAt,
-    });
-  } catch (err) {
-    next(err);
-  }
 };

@@ -77,8 +77,6 @@ const saleSchema = new mongoose.Schema(
       address: { type: String, default: null, trim: true },
       pincode: { type: String, default: null, trim: true },
     },
-
-    /* ============ Pricing Breakdown (BRD 31.1) ============ */
     pricing: {
       originalPrice: { type: Number, required: true, min: 0 },
       discount: { type: Number, default: 0, min: 0 },

@@ -15,6 +15,7 @@ import {
     reviewRefundRequest,
     processRefundRequest,
     getRefundRequest,
+    createReservationManual,
 } from "../controllers/reservation.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 
@@ -22,6 +23,13 @@ const router = Router();
 
 /* ============ PUBLIC ============ */
 router.post("/public", publicCreateReservation); //done 
+router.post(
+    "/",
+    verifyJWT,
+    restrictTo("admin", "sales_manager", "sales_executive"),
+    createReservationManual
+);
+
 
 /* ============ CRM STATS ============ */
 router.get(
