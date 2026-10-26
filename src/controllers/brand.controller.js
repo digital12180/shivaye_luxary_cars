@@ -4,9 +4,6 @@ import Vehicle from "../models/Vehicle.js";
 import { ok, fail } from "../utils/response.js";
 import { uploadToCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js";
 
-/* ============================================================
-   PUBLIC — GET /api/v1/brands
-   ============================================================ */
 export const listBrands = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;

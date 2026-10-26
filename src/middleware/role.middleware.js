@@ -1,9 +1,7 @@
 import jwt from "jsonwebtoken";
 import User from "../models/User.js"; // Apne User model ka path check kar lein
 import { fail } from "../utils/response.js";
-/* ============================================================
-   2. restrictTo — Specific Roles ko allow kare
-   ============================================================ */
+
 export const restrictTo = (...allowedRoles) => {
     return (req, res, next) => {
         // verifyJWT ne req.user set kiya hoga

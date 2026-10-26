@@ -7,10 +7,6 @@ import LeadActivity from "../models/leadActivity.js";
 import { ok, fail } from "../utils/response.js";
 import { sendNotification } from "../services/notification.service.js";
 
-/* ============================================================
-   PUBLIC — Book a test drive / showroom visit 
-   POST /api/v1/appointments/public
-   ============================================================ */
 export const publicCreateAppointment = async (req, res, next) => {
     try {
         const {
@@ -42,8 +38,6 @@ export const publicCreateAppointment = async (req, res, next) => {
                 ipAddress: req.ip || req.headers["x-forwarded-for"] || null,
             });
         }
-
-        /* 2. Validate vehicle */
         let vehicle = null;
         if (vehicleId && mongoose.isValidObjectId(vehicleId)) {
             vehicle = await Vehicle.findById(vehicleId);
@@ -479,10 +473,7 @@ export const submitFeedback = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   CRM — Soft delete
-   DELETE /api/v1/appointments/:id
-   ============================================================ */
+
 export const deleteAppointment = async (req, res, next) => {
     try {
         const appointment = await Appointment.findByIdAndUpdate(

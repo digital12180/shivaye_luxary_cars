@@ -1,10 +1,3 @@
-/* ============================================================
-   jobs/reservationExpiry.job.js
-   Shivaye Luxury Cars — Auto-expire stale reservations
-   BRD 8.1 — Reservation validity period
-   Runs every 15 minutes (configurable via CRON_RESERVATION_EXPIRY)
-   ============================================================ */
-
 import cron from "node-cron";
 import Reservation from "../models/Reservation.js";
 import Vehicle from "../models/Vehicle.js";
@@ -13,16 +6,10 @@ import LeadActivity from "../models/leadActivity.js";
 import Customer from "../models/Customer.js";
 import { sendNotification } from "../services/notification.service.js";
 
-/* ============================================================
-   Core job — finds expired reservations, releases vehicles,
-   notifies customers, rolls back leads.
-   ============================================================ */
 export const expireStaleReservations = async () => {
   const now = new Date();
   const batchSize = 50;
 
-  // Find all reservations whose hold window has passed
-  // while still unpaid/pending.
   const stale = await Reservation.find({
     status: { $in: ["initiated", "pending"] },
     paymentStatus: { $in: ["pending", "partial"] },

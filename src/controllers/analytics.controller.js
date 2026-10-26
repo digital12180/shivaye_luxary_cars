@@ -9,9 +9,6 @@ import Customer from "../models/Customer.js";
 import Campaign from "../models/Campaign.js";
 import { ok } from "../utils/response.js";
 
-/* ============================================================
-   Helpers
-   ============================================================ */
 const parseRange = (req) => {
     const { fromDate, toDate } = req.query;
     const range = {};
