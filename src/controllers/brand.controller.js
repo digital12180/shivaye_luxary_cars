@@ -108,54 +108,69 @@ export const adminListBrands = async (req, res, next) => {
    ============================================================ */
 export const createBrand = async (req, res, next) => {
     try {
-        const { name, description, country, foundedYear, website, tier, displayOrder, isActive, isFeatured } = req.body;
-        let { seo } = req.body; // Change to let so we can reassign it
+        // 1. Check if user is authenticated (Prevents crash)
+        if (!req.user || !req.user._id) {
+            return res.status(401).json({
+                success: false,
+                message: "Unauthorized. Please provide a valid Bearer Token in Postman."
+            });
+        }
+
+        let { name, description, country, foundedYear, website, tier, displayOrder, isActive, isFeatured, seo } = req.body;
 
         if (!name) return fail(res, "Brand name is required", 400);
+
+        // 2. Parse SEO if it comes as a string from form-data
+        if (seo && typeof seo === 'string') {
+            try {
+                seo = JSON.parse(seo);
+            } catch (error) {
+                return fail(res, "Invalid SEO format. Please send valid JSON.", 400);
+            }
+        }
 
         // Check duplicate
         const existing = await Brand.findOne({ name: new RegExp(`^${name}$`, "i") });
         if (existing) return fail(res, "Brand already exists", 409);
 
-        // ---- 🛠️ FIX: Parse SEO if it comes as a string from form-data ----
-        if (seo && typeof seo === 'string') {
-            try {
-                seo = JSON.parse(seo);
-            } catch (error) {
-                return fail(res, "Invalid SEO format. Must be valid JSON.", 400);
-            }
-        }
-        // -----------------------------------------------------------------
-
         // Upload logo if provided
         let logo = { url: null, publicId: null };
         if (req.file) {
-            const uploaded = await uploadToCloudinary(
-                req.file.buffer,
-                "brand-logo",
-                `${Date.now()}-${req.file.originalname}`
-            );
-            logo = { url: uploaded.url, publicId: uploaded.public_id };
+            try {
+                const uploaded = await uploadToCloudinary(
+                    req.file.buffer,
+                    "brand-logo",
+                    `${Date.now()}-${req.file.originalname}`
+                );
+                logo = { url: uploaded.url, publicId: uploaded.public_id };
+            } catch (uploadError) {
+                console.error("Cloudinary Upload Error:", uploadError);
+                return fail(res, "Failed to upload logo to Cloudinary", 500);
+            }
         }
 
-        const brand = await Brand.create({
+        // 3. Handle boolean conversions (form-data sends strings like "true")
+        const brandData = {
             name,
             description,
             country,
-            foundedYear,
+            foundedYear: foundedYear ? Number(foundedYear) : null,
             website,
             tier,
-            displayOrder,
-            isActive,
-            isFeatured,
-            seo, // Now this is a proper object, not a string
+            displayOrder: displayOrder ? Number(displayOrder) : 0,
+            isActive: isActive === 'true' || isActive === true,
+            isFeatured: isFeatured === 'true' || isFeatured === true,
+            seo,
             logo,
             createdBy: req.user._id,
             updatedBy: req.user._id,
-        });
+        };
+
+        const brand = await Brand.create(brandData);
 
         return ok(res, brand, "Brand created", 201);
     } catch (err) {
+        console.error("Create Brand Error:", err); // This will print exact error in Render logs
         next(err);
     }
 };
