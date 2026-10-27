@@ -204,6 +204,21 @@ export const createVehicle = async (req, res, next) => {
             });
             if (catDoc) categoryRef = catDoc._id;
         }
+        if (req.body.features) {
+            if (typeof req.body.features === 'string') {
+                try {
+                    // Convert string '["a", "b"]' to actual array
+                    req.body.features = JSON.parse(req.body.features);
+                } catch (e) {
+                    // Fallback: if it's a comma-separated string like "a, b"
+                    req.body.features = req.body.features.split(',').map(f => f.trim());
+                }
+            }
+            // Ensure it's an array of strings
+            if (Array.isArray(req.body.features)) {
+                req.body.features = req.body.features.map(f => String(f).trim());
+            }
+        }
 
         // ---- Upload images ----
         let imageUrls = [];
@@ -310,9 +325,22 @@ export const updateVehicle = async (req, res, next) => {
             newUploadedPublicIds = uploaded.map((f) => f.public_id);
         }
 
+
         // 5. Final images array banao (Existing bache hue + Naye wale)
         vehicle.images = [...keepImages, ...newUploadedUrls];
 
+        if (req.body.features) {
+            if (typeof req.body.features === 'string') {
+                try {
+                    req.body.features = JSON.parse(req.body.features);
+                } catch (e) {
+                    req.body.features = req.body.features.split(',').map(f => f.trim());
+                }
+            }
+            if (Array.isArray(req.body.features)) {
+                req.body.features = req.body.features.map(f => String(f).trim());
+            }
+        }
         // 6. Final publicIds array banao
         // (Purane bache hue publicIds + Naye publicIds)
         const keptPublicIds = vehicle.imagePublicIds.filter((id, index) => {
