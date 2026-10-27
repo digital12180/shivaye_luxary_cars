@@ -108,11 +108,11 @@ export const adminListBrands = async (req, res, next) => {
    ============================================================ */
 export const createBrand = async (req, res, next) => {
     try {
-        // 1. Check if user is authenticated (Prevents crash)
+        // 1. Check if user is authenticated
         if (!req.user || !req.user._id) {
             return res.status(401).json({
                 success: false,
-                message: "Unauthorized. Please provide a valid Bearer Token in Postman."
+                message: "Unauthorized. Please provide a valid Bearer Token."
             });
         }
 
@@ -120,7 +120,7 @@ export const createBrand = async (req, res, next) => {
 
         if (!name) return fail(res, "Brand name is required", 400);
 
-        // 2. Parse SEO if it comes as a string from form-data
+        // 2. Parse SEO if it comes as a string
         if (seo && typeof seo === 'string') {
             try {
                 seo = JSON.parse(seo);
@@ -133,13 +133,14 @@ export const createBrand = async (req, res, next) => {
         const existing = await Brand.findOne({ name: new RegExp(`^${name}$`, "i") });
         if (existing) return fail(res, "Brand already exists", 409);
 
-        // Upload logo if provided
+        // 3. Upload logo if provided
         let logo = { url: null, publicId: null };
         if (req.file) {
             try {
+                // ✅ FIX: Dusra argument "image" hona chahiye (resourceType)
                 const uploaded = await uploadToCloudinary(
                     req.file.buffer,
-                    "brand-logo",
+                    "image", // 👈 Yahan "brand-logo" ki jagah "image" karein
                     `${Date.now()}-${req.file.originalname}`
                 );
                 logo = { url: uploaded.url, publicId: uploaded.public_id };
@@ -149,7 +150,7 @@ export const createBrand = async (req, res, next) => {
             }
         }
 
-        // 3. Handle boolean conversions (form-data sends strings like "true")
+        // 4. Handle boolean conversions
         const brandData = {
             name,
             description,
@@ -170,7 +171,7 @@ export const createBrand = async (req, res, next) => {
 
         return ok(res, brand, "Brand created", 201);
     } catch (err) {
-        console.error("Create Brand Error:", err); // This will print exact error in Render logs
+        console.error("Create Brand Error:", err);
         next(err);
     }
 };
