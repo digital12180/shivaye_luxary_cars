@@ -108,11 +108,10 @@ export const adminListBrands = async (req, res, next) => {
    ============================================================ */
 export const createBrand = async (req, res, next) => {
     try {
-        // 1. Check if user is authenticated
         if (!req.user || !req.user._id) {
             return res.status(401).json({
                 success: false,
-                message: "Unauthorized. Please provide a valid Bearer Token."
+                message: "Unauthorized. Please provide a valid Bearer Token.",
             });
         }
 
@@ -120,27 +119,23 @@ export const createBrand = async (req, res, next) => {
 
         if (!name) return fail(res, "Brand name is required", 400);
 
-        // 2. Parse SEO if it comes as a string
-        if (seo && typeof seo === 'string') {
+        if (seo && typeof seo === "string") {
             try {
                 seo = JSON.parse(seo);
-            } catch (error) {
+            } catch {
                 return fail(res, "Invalid SEO format. Please send valid JSON.", 400);
             }
         }
 
-        // Check duplicate
         const existing = await Brand.findOne({ name: new RegExp(`^${name}$`, "i") });
         if (existing) return fail(res, "Brand already exists", 409);
 
-        // 3. Upload logo if provided
         let logo = { url: null, publicId: null };
         if (req.file) {
             try {
-                // ✅ FIX: Dusra argument "image" hona chahiye (resourceType)
                 const uploaded = await uploadToCloudinary(
                     req.file.buffer,
-                    "image", // 👈 Yahan "brand-logo" ki jagah "image" karein
+                    "image",
                     `${Date.now()}-${req.file.originalname}`
                 );
                 logo = { url: uploaded.url, publicId: uploaded.public_id };
@@ -150,8 +145,7 @@ export const createBrand = async (req, res, next) => {
             }
         }
 
-        // 4. Handle boolean conversions
-        const brandData = {
+        const brand = await Brand.create({
             name,
             description,
             country,
@@ -159,15 +153,13 @@ export const createBrand = async (req, res, next) => {
             website,
             tier,
             displayOrder: displayOrder ? Number(displayOrder) : 0,
-            isActive: isActive === 'true' || isActive === true,
-            isFeatured: isFeatured === 'true' || isFeatured === true,
+            isActive: isActive === "true" || isActive === true,
+            isFeatured: isFeatured === "true" || isFeatured === true,
             seo,
             logo,
             createdBy: req.user._id,
             updatedBy: req.user._id,
-        };
-
-        const brand = await Brand.create(brandData);
+        });
 
         return ok(res, brand, "Brand created", 201);
     } catch (err) {
@@ -176,40 +168,91 @@ export const createBrand = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   ADMIN — PATCH /api/v1/brands/:id
-   ============================================================ */
+
 export const updateBrand = async (req, res, next) => {
     try {
-        const protectedFields = ["slug", "createdBy", "deletedAt"];
-        protectedFields.forEach((f) => delete req.body[f]);
+        const { id } = req.params;
 
-        const brand = await Brand.findById(req.params.id);
-        if (!brand) return fail(res, "Brand not found", 404);
-
-        // If new logo uploaded → replace old
-        if (req.file) {
-            if (brand.logo?.publicId) {
-                await deleteFromCloudinary(brand.logo.publicId, "image");
-            }
-            const uploaded = await uploadToCloudinary(
-                req.file.buffer,
-                "brand-logo",
-                `${Date.now()}-${req.file.originalname}`
-            );
-            brand.logo = { url: uploaded.url, publicId: uploaded.public_id };
+        // 1. Validate ObjectId FIRST → prevents CastError 500
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return fail(res, "Invalid brand id", 400);
         }
 
-        Object.assign(brand, req.body);
-        brand.updatedBy = req.user._id;
-        await brand.save();
+        const brand = await Brand.findById(id);
+        if (!brand) return fail(res, "Brand not found", 404);
+
+        let { name, description, country, foundedYear, website, tier, displayOrder, isActive, isFeatured, seo } = req.body;
+
+        // 2. Duplicate name check (exclude self)
+        if (name && name.trim().toLowerCase() !== brand.name.toLowerCase()) {
+            const dup = await Brand.findOne({
+                _id: { $ne: id },
+                name: new RegExp(`^${name.trim()}$`, "i"),
+            });
+            if (dup) return fail(res, "Brand name already exists", 409);
+        }
+
+        // 3. Parse SEO
+        if (seo && typeof seo === "string") {
+            try { seo = JSON.parse(seo); }
+            catch { return fail(res, "Invalid SEO format", 400); }
+        }
+
+        // 4. Logo (replace if new file uploaded)
+        if (req.file) {
+            try {
+                if (brand.logo?.publicId) {
+                    await deleteFromCloudinary(brand.logo.publicId, "image").catch((e) =>
+                        console.warn("Old logo delete failed:", e.message)
+                    );
+                }
+                const uploaded = await uploadToCloudinary(
+                    req.file.buffer,
+                    "image",
+                    `${Date.now()}-${req.file.originalname}`
+                );
+                brand.logo = { url: uploaded.url, publicId: uploaded.public_id };
+            } catch (uploadError) {
+                console.error("Cloudinary Upload Error:", uploadError);
+                return fail(res, "Failed to upload logo", 500);
+            }
+        }
+
+        // 5. Apply scalar fields safely
+        if (name !== undefined) brand.name = name;
+        if (description !== undefined) brand.description = description;
+        if (country !== undefined) brand.country = country;
+        if (website !== undefined) brand.website = website;
+        if (tier !== undefined) brand.tier = tier;
+        if (seo !== undefined) brand.seo = seo;
+
+        if (foundedYear !== undefined && foundedYear !== "") {
+            const n = Number(foundedYear);
+            if (Number.isNaN(n)) return fail(res, "foundedYear must be a number", 400);
+            brand.foundedYear = n;
+        }
+
+        if (displayOrder !== undefined && displayOrder !== "") {
+            const n = Number(displayOrder);
+            if (Number.isNaN(n)) return fail(res, "displayOrder must be a number", 400);
+            brand.displayOrder = n;
+        }
+
+        if (isActive !== undefined)
+            brand.isActive = isActive === "true" || isActive === true;
+        if (isFeatured !== undefined)
+            brand.isFeatured = isFeatured === "true" || isFeatured === true;
+
+        brand.updatedBy = req.user?._id;
+
+        await brand.save(); // triggers validators, returns clean JSON
 
         return ok(res, brand, "Brand updated");
     } catch (err) {
+        console.error("Update Brand Error:", err);
         next(err);
     }
 };
-
 /* ============================================================
    ADMIN — PATCH /api/v1/brands/:id/toggle
    ============================================================ */
