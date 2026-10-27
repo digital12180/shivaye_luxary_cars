@@ -85,6 +85,7 @@ const paymentSchema = new mongoose.Schema(
     amount: { type: Number, required: true, min: 0 },
     currency: { type: String, default: "INR" },
 
+    
     gatewayFee: { type: Number, default: 0, min: 0 },
     netAmount: { type: Number, default: 0, min: 0 },
 

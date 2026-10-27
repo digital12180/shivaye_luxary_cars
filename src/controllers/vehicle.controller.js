@@ -10,13 +10,6 @@ const generateStockId = async () => {
     return `SLC-${String(count + 1).padStart(5, "0")}`;
 };
 
-/* ============================================================
-   PUBLIC — GET /api/v1/vehicles
-Sort: Most recent	GET /api/v1/vehicles?sort=recent
-Sort: Name A-Z	GET /api/v1/vehicles?sort=name_asc
-Sort: Price low-high	GET /api/v1/vehicles?sort=price_low_high
-Filter by RC Status	GET /api/v1/vehicles?rcCheck=Verified
-   ============================================================ */
 export const listVehicles = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
@@ -275,15 +268,62 @@ export const updateVehicle = async (req, res, next) => {
             if (catDoc) req.body.category = catDoc.name;
         }
 
-        // ---- Images ----
+        // ==========================================
+        // ---- UPDATED IMAGES LOGIC ----
+        // ==========================================
+
+        // 1. Frontend se aane wale existing images (jo delete nahi hue)
+        // Note: Postman/multipart-form-data se array string aata hai, use parse karna padega
+        let keepImages = [];
+        if (req.body.existingImages) {
+            keepImages = typeof req.body.existingImages === 'string'
+                ? JSON.parse(req.body.existingImages)
+                : req.body.existingImages;
+        } else {
+            // Agar existingImages nahi bheja gaya, toh purani sari images rakho
+            keepImages = vehicle.images || [];
+        }
+
+        // 2. Purani images jo user ne hata di (existing images list se match nahi kar rahi)
+        const imagesToDelete = vehicle.images.filter(img => !keepImages.includes(img));
+
+        // 3. Un deleted images ko Cloudinary se delete karo
+        if (imagesToDelete.length > 0) {
+            // Aapko imagePublicIds bhi filter karni hogi delete karne ke liye
+            // (Assuming aapke paas URL aur public_id ka mapping hai, agar nahi toh sirf URL se delete karna padega)
+            const publicIdsToDelete = vehicle.imagePublicIds.filter((id, index) => {
+                const url = vehicle.images[index];
+                return imagesToDelete.includes(url);
+            });
+            if (publicIdsToDelete.length > 0) {
+                await deleteMultipleFromCloudinary(publicIdsToDelete, "image");
+            }
+        }
+
+        // 4. Naye images upload karo (agar frontend se aaye hain)
+        let newUploadedUrls = [];
+        let newUploadedPublicIds = [];
+
         if (req.files?.images?.length) {
             const uploaded = await uploadMultipleToCloudinary(req.files.images);
-            if (vehicle.imagePublicIds?.length) {
-                await deleteMultipleFromCloudinary(vehicle.imagePublicIds, "image");
-            }
-            vehicle.images = uploaded.map((f) => f.url);
-            vehicle.imagePublicIds = uploaded.map((f) => f.public_id);
+            newUploadedUrls = uploaded.map((f) => f.url);
+            newUploadedPublicIds = uploaded.map((f) => f.public_id);
         }
+
+        // 5. Final images array banao (Existing bache hue + Naye wale)
+        vehicle.images = [...keepImages, ...newUploadedUrls];
+
+        // 6. Final publicIds array banao
+        // (Purane bache hue publicIds + Naye publicIds)
+        const keptPublicIds = vehicle.imagePublicIds.filter((id, index) => {
+            const url = vehicle.images[index]; // Yahan dhyan rakhein, array update ho chuki hai
+            return keepImages.includes(url);
+        });
+        vehicle.imagePublicIds = [...keptPublicIds, ...newUploadedPublicIds];
+
+        // ==========================================
+        // ---- END IMAGES LOGIC ----
+        // ==========================================
 
         // ---- Video ----
         if (req.files?.video?.length) {
@@ -299,6 +339,12 @@ export const updateVehicle = async (req, res, next) => {
             vehicle.video = uploaded.url;
             vehicle.videoPublicId = uploaded.public_id;
         }
+
+        // Note: Agar req.body mein images ya existingImages aa raha hai, toh Object.assign use karte waqt dhyan rakhein
+        // Kyonki humne vehicle.images manually set kar diya hai, Object.assign usko overwrite kar sakta hai.
+        // Isliye req.body se images/existingImages ko delete kar dena chahiye:
+        delete req.body.images;
+        delete req.body.existingImages;
 
         Object.assign(vehicle, req.body);
         vehicle.updatedBy = req.user._id;
