@@ -108,13 +108,24 @@ export const adminListBrands = async (req, res, next) => {
    ============================================================ */
 export const createBrand = async (req, res, next) => {
     try {
-        const { name, description, country, foundedYear, website, tier, displayOrder, isActive, isFeatured, seo } = req.body;
+        const { name, description, country, foundedYear, website, tier, displayOrder, isActive, isFeatured } = req.body;
+        let { seo } = req.body; // Change to let so we can reassign it
 
         if (!name) return fail(res, "Brand name is required", 400);
 
         // Check duplicate
         const existing = await Brand.findOne({ name: new RegExp(`^${name}$`, "i") });
         if (existing) return fail(res, "Brand already exists", 409);
+
+        // ---- 🛠️ FIX: Parse SEO if it comes as a string from form-data ----
+        if (seo && typeof seo === 'string') {
+            try {
+                seo = JSON.parse(seo);
+            } catch (error) {
+                return fail(res, "Invalid SEO format. Must be valid JSON.", 400);
+            }
+        }
+        // -----------------------------------------------------------------
 
         // Upload logo if provided
         let logo = { url: null, publicId: null };
@@ -137,7 +148,7 @@ export const createBrand = async (req, res, next) => {
             displayOrder,
             isActive,
             isFeatured,
-            seo,
+            seo, // Now this is a proper object, not a string
             logo,
             createdBy: req.user._id,
             updatedBy: req.user._id,
