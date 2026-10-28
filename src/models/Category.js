@@ -22,34 +22,6 @@ const categorySchema = new mongoose.Schema(
             type: String,
             trim: true,
         },
-
-        // Optional icon/image for frontend display
-        image: {
-            url: { type: String, default: null },
-            publicId: { type: String, default: null },
-        },
-
-        // Category type — helps group in UI
-        type: {
-            type: String,
-            enum: ["body_type", "segment", "fuel_type", "other"],
-            default: "body_type",
-            index: true,
-        },
-
-        // Example: SUV, Sedan, Hatchback, Coupe, Convertible, MPV
-        bodyType: {
-            type: String,
-            trim: true,
-            default: null,
-        },
-
-        // Display order
-        displayOrder: {
-            type: Number,
-            default: 0,
-        },
-
         isActive: {
             type: Boolean,
             default: true,

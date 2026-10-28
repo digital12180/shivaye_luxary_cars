@@ -8,13 +8,15 @@ export const listBrands = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 50;
-        const { search, tier, featured, sortBy = "displayOrder" } = req.query;
+        const { search, tier, featured, sortBy = "displayOrder", isActive=true } = req.query;
 
-        const filter = { isActive: true };
+        const filter = {};
 
         if (tier) filter.tier = tier;
         if (featured === "true") filter.isFeatured = true;
-
+        if (isActive) {
+            filter.isActive = isActive;
+        }
         if (search) {
             filter.$or = [
                 { name: new RegExp(search, "i") },

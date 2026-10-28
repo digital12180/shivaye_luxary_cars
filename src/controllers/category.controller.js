@@ -11,11 +11,14 @@ export const listCategories = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 50;
-        const { search, type, featured, sortBy = "displayOrder" } = req.query;
+        const { search, type, featured, sortBy = "displayOrder", isActive = true } = req.query;
 
-        const filter = { isActive: true };
+        const filter = {};
         if (type) filter.type = type;
         if (featured === "true") filter.isFeatured = true;
+        if (isActive) {
+            filter.isActive = isActive;
+        }
 
         if (search) {
             filter.$or = [
