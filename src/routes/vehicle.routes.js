@@ -14,7 +14,9 @@ import {
     getVehicleSale,
     getVehicleHistory,
     getVehicleCTA,
-    updateRcCheckStatus
+    updateRcCheckStatus,
+    listFeaturedVehicles,
+    toggleVehicleFeatured
 } from "../controllers/vehicle.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 import { upload } from "../middleware/upload.middleware.js";
@@ -82,4 +84,15 @@ router.patch(
     restrictTo("admin", "sales_manager", "sales_executive"),
     updateRcCheckStatus
 );
+// ✅ NEW — only featured vehicles (public / read)
+router.get("/featured", listFeaturedVehicles);
+
+// ✅ NEW — toggle featured (protected, admin/manager ideally)
+router.patch(
+    "/:id/featured",
+    verifyJWT,
+    restrictTo("admin"),
+    toggleVehicleFeatured
+);
+
 export default router;

@@ -19,8 +19,8 @@ export const listVehicles = async (req, res, next) => {
             fuelType, transmission, bodyType,
             minPrice, maxPrice, minYear, maxYear,
             maxKilometers, status, featured,
-            brandRef, categoryRef, rcCheck, // ✅ Added rcCheck
-            sort, // ✅ Changed sortBy to 'sort' to match standard UI query
+            brandRef, categoryRef, rcCheck,
+            sort,
         } = req.query;
 
         const filter = { isPublished: true };
@@ -110,6 +110,75 @@ export const listVehicles = async (req, res, next) => {
     }
 };
 
+/**
+ * GET /api/vehicles/featured
+ * Returns only vehicles where featured === true
+ * (still respects isPublished + soft-delete via pre-hook)
+ */
+export const listFeaturedVehicles = async (req, res, next) => {
+    try {
+        const page = Number(req.query.page) || 1;
+        const limit = Number(req.query.limit) || 12;
+
+        const filter = {
+            isPublished: true,
+            featured: true,
+        };
+
+        const [data, total] = await Promise.all([
+            Vehicle.find(filter)
+                .populate("brandRef", "name logo slug")
+                .populate("categoryRef", "name slug")
+                .sort({ createdAt: -1 })
+                .skip((page - 1) * limit)
+                .limit(limit),
+            Vehicle.countDocuments(filter),
+        ]);
+
+        return ok(res, {
+            data,
+            pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+        });
+    } catch (err) {
+        next(err);
+    }
+};
+
+/**
+ * PATCH /api/vehicles/:id/featured
+ * Toggles featured status (or sets explicitly if body.featured is passed)
+ */
+export const toggleVehicleFeatured = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+
+        const vehicle = await Vehicle.findById(id);
+        if (!vehicle) {
+            return res.status(404).json({ message: "Vehicle not found" });
+        }
+
+        // If body explicitly sends `featured`, honor it.
+        // Otherwise, toggle the current value.
+        if (typeof req.body?.featured === "boolean") {
+            vehicle.featured = req.body.featured;
+        } else {
+            vehicle.featured = !vehicle.featured;
+        }
+
+        if (req.user?._id) {
+            vehicle.updatedBy = req.user._id;
+        }
+
+        await vehicle.save();
+
+        return ok(res, {
+            message: `Vehicle ${vehicle.featured ? "marked as" : "removed from"} featured`,
+            data: { _id: vehicle._id, featured: vehicle.featured },
+        });
+    } catch (err) {
+        next(err);
+    }
+};
 /* ============================================================
    PUBLIC — GET /api/v1/vehicles/:slugOrId
    ============================================================ */

@@ -4,7 +4,6 @@ import bcrypt from "bcryptjs";
 const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
-
     email: {
       type: String,
       required: true,
@@ -13,9 +12,7 @@ const userSchema = new mongoose.Schema(
       trim: true,
       index: true,
     },
-
     phone: { type: String, trim: true },
-
     password: {
       type: String,
       required: true,
@@ -23,22 +20,27 @@ const userSchema = new mongoose.Schema(
       minlength: 8,
     },
 
+    // 🔴 Ab role string hi rahega (jaise: "admin", "sales_manager")
     role: {
       type: String,
       required: true,
       index: true,
+      trim: true,
     },
-    permissions: [{ type: String, trim: true }],
+
+    // 🔴 Dynamic permissions (jaise: "Category_read", "Leads_create")
+    permissions: {
+      type: [String],
+      default: [],
+    },
 
     profileImage: { type: String, default: null },
-
     status: {
       type: String,
       enum: ["active", "inactive", "suspended"],
       default: "active",
       index: true,
     },
-
     isActive: { type: Boolean, default: true },
 
     lastLoginAt: { type: Date, default: null },
@@ -48,7 +50,6 @@ const userSchema = new mongoose.Schema(
 
     passwordResetToken: { type: String, select: false },
     passwordResetExpires: { type: Date, select: false },
-
     refreshTokenHash: { type: String, select: false },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
@@ -58,18 +59,13 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-userSchema.index({ email: 1, deletedAt: 1 });
-userSchema.index({ role: 1, status: 1 });
-
 userSchema.pre(/^find/, function () {
   this.where({ deletedAt: null });
-  // next();
 });
 
 userSchema.pre("save", async function () {
   if (!this.isModified("password")) return;
   this.password = await bcrypt.hash(this.password, 12);
-  // next();
 });
 
 userSchema.methods.comparePassword = function (candidate) {
