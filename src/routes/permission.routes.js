@@ -7,14 +7,14 @@ import {
     addMultiplePermissions,
     removeMultiplePermissions,
     clearUserPermissions,
-} from "../controllers/userPermissionController.js";
-import { protect } from "../middlewares/authMiddleware.js";
-import { checkPermission } from "../middlewares/checkPermission.js";
+} from "../controllers/permission.controller.js";
+import { checkPermission } from "../middleware/checkPermission.js";
 import { PERMISSIONS } from "../utils/permission.js";
+import { verifyJWT } from "../middleware/auth.middleware.js";
 
 const router = express.Router({ mergeParams: true });
 
-router.use(protect);
+router.use(verifyJWT);
 
 // Sabhi permission routes ke liye user permissions manage karne ki access chahiye
 const canManage = checkPermission(PERMISSIONS.USERS_UPDATE);
