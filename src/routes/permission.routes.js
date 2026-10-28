@@ -15,21 +15,21 @@ const router = express.Router({ mergeParams: true });
 router.use(verifyJWT);
 
 // Sabhi permission routes ke liye user permissions manage karne ki access chahiye
-const canManage = checkPermission(PERMISSIONS.USERS_UPDATE);
-
+// const canManage = checkPermission(PERMISSIONS.USERS_UPDATE);
+ 
 // GET: Current permissions of user
-router.get("/", canManage, getUserPermissions);
+router.get("/", getUserPermissions);
 
 // PUT: Replace entire permissions array
-router.put("/", canManage, updateUserPermissions);
+router.put("/", updateUserPermissions);
 
 // POST: Add single permission
-router.post("/", canManage, addUserPermission);
+router.post("/", addUserPermission);
 
 // DELETE: Remove single permission
-router.delete("/", canManage, removeUserPermission);
+router.delete("/", removeUserPermission);
 
 // DELETE: Clear all permissions
-router.delete("/clear", canManage, clearUserPermissions);
+router.delete("/clear", clearUserPermissions);
 
 export default router;

@@ -9,10 +9,12 @@ const VALID_PERMISSIONS = Object.values(PERMISSIONS);
 // ==========================
 export const getUserPermissions = async (req, res, next) => {
     try {
-        const user = await User.findById(req.params.id).select("permissions");
-        if (!user) return fail(res, "User not found", 404);
 
-        // 🔴 Strictly only permissions array return karo
+        const { id } = req.params
+        console.log("Fetching permissions for user ID:", req.params);
+
+        const user = await User.findById(id).select("permissions");
+        if (!user) return fail(res, "User not found", 404);
         return ok(res, { permissions: user.permissions });
     } catch (err) {
         next(err);
