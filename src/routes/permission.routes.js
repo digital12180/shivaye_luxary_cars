@@ -4,8 +4,6 @@ import {
     updateUserPermissions,
     addUserPermission,
     removeUserPermission,
-    addMultiplePermissions,
-    removeMultiplePermissions,
     clearUserPermissions,
 } from "../controllers/permission.controller.js";
 import { checkPermission } from "../middleware/checkPermission.js";
@@ -30,12 +28,6 @@ router.post("/", canManage, addUserPermission);
 
 // DELETE: Remove single permission
 router.delete("/", canManage, removeUserPermission);
-
-// POST: Add multiple permissions at once
-router.post("/bulk-add", canManage, addMultiplePermissions);
-
-// DELETE: Remove multiple permissions at once
-router.delete("/bulk-remove", canManage, removeMultiplePermissions);
 
 // DELETE: Clear all permissions
 router.delete("/clear", canManage, clearUserPermissions);
