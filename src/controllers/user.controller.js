@@ -9,6 +9,7 @@ const VALID_PERMISSIONS = Object.values(PERMISSIONS);
 // LIST USERS
 // ==========================
 export const listUsers = async (req, res, next) => {
+    
     try {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
