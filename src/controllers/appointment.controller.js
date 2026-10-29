@@ -10,7 +10,7 @@ import { sendNotification } from "../services/notification.service.js";
 export const publicCreateAppointment = async (req, res, next) => {
     try {
         const {
-            name, phone, email, city,
+            name, phone, email, location,
             vehicle: vehicleId,
             type,
             scheduledAt,
@@ -32,7 +32,7 @@ export const publicCreateAppointment = async (req, res, next) => {
         let customer = await Customer.findOne({ phone });
         if (!customer) {
             customer = await Customer.create({
-                name, phone, email, city,
+                name, phone, email, city:location,
                 source: source || "direct_website",
                 attribution: attribution || {},
                 ipAddress: req.ip || req.headers["x-forwarded-for"] || null,
