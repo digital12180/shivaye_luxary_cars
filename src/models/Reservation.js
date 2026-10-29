@@ -96,7 +96,6 @@ const reservationSchema = new mongoose.Schema(
         amountPaid: { type: Number, default: 0, min: 0 },
         amountDue: { type: Number, default: 0, min: 0 },
 
-        // ✅ UPDATED: "Payment Check" from Screenshot
         paymentCheck: {
             type: String,
             enum: ["Pending", "Received - simulated", "Failed"],
@@ -119,9 +118,6 @@ const reservationSchema = new mongoose.Schema(
 
         payment: { type: mongoose.Schema.Types.ObjectId, ref: "Payment", default: null },
         currency: { type: String, default: "INR" },
-
-        /* ============ Status ============ */
-        // ✅ UPDATED: Status Enum from Screenshot
         status: {
             type: String,
             enum: [

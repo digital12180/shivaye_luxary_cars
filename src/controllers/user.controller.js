@@ -9,7 +9,7 @@ const VALID_PERMISSIONS = Object.values(PERMISSIONS);
 // LIST USERS
 // ==========================
 export const listUsers = async (req, res, next) => {
-    
+
     try {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
@@ -67,7 +67,7 @@ export const getUser = async (req, res, next) => {
 // ==========================
 export const createUser = async (req, res, next) => {
     try {
-        const { name, email, phone, password, role, permissions } = req.body;
+        const { name, email, phone, password, role, permissions = "Dashboard_read" } = req.body;
 
         if (!name || !email || !password || !role) {
             return fail(res, "Name, email, password and role are required", 400);
