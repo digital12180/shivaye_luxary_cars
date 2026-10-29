@@ -32,7 +32,7 @@ export const publicCreateAppointment = async (req, res, next) => {
         let customer = await Customer.findOne({ phone });
         if (!customer) {
             customer = await Customer.create({
-                name, phone, email, city:location,
+                name, phone, email, city: location,
                 source: source || "direct_website",
                 attribution: attribution || {},
                 ipAddress: req.ip || req.headers["x-forwarded-for"] || null,
@@ -476,12 +476,7 @@ export const submitFeedback = async (req, res, next) => {
 
 export const deleteAppointment = async (req, res, next) => {
     try {
-        const appointment = await Appointment.findByIdAndUpdate(
-            req.params.id,
-            { deletedAt: new Date(), isActive: false, updatedBy: req.user._id },
-            { new: true }
-        );
-        if (!appointment) return fail(res, "Appointment not found", 404);
+        const appointment = await Appointment.findByIdAndDelete(req.params.id);
         return ok(res, {}, "Appointment deleted");
     } catch (err) {
         next(err);
