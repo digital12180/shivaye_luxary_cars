@@ -4,6 +4,8 @@ import Vehicle from "../models/Vehicle.js";
 import { ok, fail } from "../utils/response.js";
 import { extractAttribution } from "../services/attribution.service.js";
 import { captureLocation } from "../services/geolocation.service.js";
+import Lead from "../models/Lead.js";
+import Appointment from "../models/Appointment.js";
 
 
 export const publicCreateCustomer = async (req, res, next) => {
