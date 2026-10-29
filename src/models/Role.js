@@ -12,7 +12,7 @@ const roleSchema = new mongoose.Schema(
     },
     description: { type: String, trim: true },
     
-    isSystemRole: { type: Boolean, default: false }, // Prevent deletion of default roles like Admin
+    isSystemRole: { type: Boolean, default: false }, 
     status: {
       type: String,
       enum: ["active", "inactive"],

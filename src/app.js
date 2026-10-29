@@ -18,6 +18,7 @@ import brandRoutes from "./routes/brand.routes.js";
 import categoryRoutes from "./routes/category.routes.js";
 import followUpRoutes from "./routes/followUp.routes.js"
 import userPermissionRoutes from "./routes/permission.routes.js"
+import roleRoutes from "./routes/role.routes.js"
 import { notFound, errorHandler } from "./middleware/error.middleware.js";
 
 const app = express();
@@ -69,6 +70,8 @@ app.use("/api/v1/brands", brandRoutes);
 app.use("/api/v1/categories", categoryRoutes);
 app.use("/api/v1/follow-ups", followUpRoutes);
 app.use("/api/v1/users/:id/permissions", userPermissionRoutes);
+app.use("/api/v1/roles", roleRoutes);
+
 
 
 app.use(notFound);

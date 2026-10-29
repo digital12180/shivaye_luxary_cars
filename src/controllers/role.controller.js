@@ -43,7 +43,7 @@ export const getRole = async (req, res, next) => {
 // POST /api/v1/roles
 export const createRole = async (req, res, next) => {
   try {
-    const { name, description, permissions } = req.body;
+    const { name, description } = req.body;
 
     const exists = await Role.findOne({ name });
     if (exists) return fail(res, "Role with this name already exists", 409);
@@ -51,7 +51,6 @@ export const createRole = async (req, res, next) => {
     const role = await Role.create({
       name,
       description,
-      permissions: permissions || {}, // e.g. { leads: { read: true, create: true } }
       createdBy: req.user._id,
     });
 
@@ -64,11 +63,11 @@ export const createRole = async (req, res, next) => {
 // PUT /api/v1/roles/:id
 export const updateRole = async (req, res, next) => {
   try {
-    const { name, description, permissions, status } = req.body;
+    const { name, description, status } = req.body;
 
     const role = await Role.findById(req.params.id);
     if (!role) return fail(res, "Role not found", 404);
-    
+
     // Prevent updating system role names/status
     if (role.isSystemRole && name && name !== role.name) {
       return fail(res, "Cannot rename a system role", 400);
@@ -77,11 +76,6 @@ export const updateRole = async (req, res, next) => {
     if (name) role.name = name;
     if (description !== undefined) role.description = description;
     if (status) role.status = status;
-    
-    // Update permissions (overwrite or merge depending on your need)
-    if (permissions) {
-      role.permissions = permissions; 
-    }
 
     role.updatedBy = req.user._id;
     await role.save();
@@ -101,10 +95,6 @@ export const deleteRole = async (req, res, next) => {
     if (role.isSystemRole) {
       return fail(res, "System roles cannot be deleted", 400);
     }
-
-    // Optional: Check if any active user is using this role before deleting
-    // const userCount = await User.countDocuments({ roleId: role._id });
-    // if (userCount > 0) return fail(res, "Cannot delete role assigned to users", 400);
 
     role.deletedAt = new Date();
     role.status = "inactive";
