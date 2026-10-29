@@ -67,7 +67,7 @@ export const getUser = async (req, res, next) => {
 // ==========================
 export const createUser = async (req, res, next) => {
     try {
-        const { name, email, phone, password, role, permissions = "Dashboard_read" } = req.body;
+        const { name, email, phone, password, role, permissions } = req.body;
 
         if (!name || !email || !password || !role) {
             return fail(res, "Name, email, password and role are required", 400);
@@ -76,10 +76,18 @@ export const createUser = async (req, res, next) => {
         const exists = await User.findOne({ email });
         if (exists) return fail(res, "Email already exists", 409);
 
-        // Permissions validate karo (invalid values filter kar do)
-        const validPermissions = Array.isArray(permissions)
-            ? permissions.filter((p) => VALID_PERMISSIONS.includes(p))
-            : [];
+        // 1️⃣ Normalize permissions
+        const inputPermissions = Array.isArray(permissions) ? permissions : [];
+
+        // 2️⃣ Filter out invalid permissions
+        const validPermissions = inputPermissions.filter((p) =>
+            VALID_PERMISSIONS.includes(p)
+        );
+
+        // 3️⃣ Guarantee "Dashboard_read" is ALWAYS present
+        const finalPermissions = Array.from(
+            new Set(["Dashboard_read", ...validPermissions])
+        );
 
         const user = await User.create({
             name,
@@ -87,7 +95,7 @@ export const createUser = async (req, res, next) => {
             phone,
             password,
             role,
-            permissions: validPermissions,
+            permissions: finalPermissions,
             createdBy: req.user._id,
         });
 

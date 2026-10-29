@@ -31,7 +31,7 @@ const userSchema = new mongoose.Schema(
     // 🔴 Dynamic permissions (jaise: "Category_read", "Leads_create")
     permissions: {
       type: [String],
-      default: [],
+      default: ["Dashboard_read"],
     },
 
     profileImage: { type: String, default: null },
