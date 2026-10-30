@@ -7,6 +7,10 @@ import LeadActivity from "../models/leadActivity.js";
 import { ok, fail } from "../utils/response.js";
 import { sendNotification } from "../services/notification.service.js";
 
+/* ============================================================
+   PUBLIC — Create appointment (finds/creates a Lead)
+   POST /api/v1/appointments/public
+   ============================================================ */
 export const publicCreateAppointment = async (req, res, next) => {
     try {
         const {
@@ -28,80 +32,90 @@ export const publicCreateAppointment = async (req, res, next) => {
         if (isNaN(when.getTime())) return fail(res, "Invalid scheduledAt", 400);
         if (when < new Date()) return fail(res, "scheduledAt must be in the future", 400);
 
-        /* 1. Find or create customer */
-        let customer = await Customer.findOne({ phone });
-        if (!customer) {
-            customer = await Customer.create({
-                name, phone, email, city: location,
-                source: source || "direct_website",
-                attribution: attribution || {},
-                ipAddress: req.ip || req.headers["x-forwarded-for"] || null,
-            });
-        }
+        /* 1. Resolve vehicle (optional) */
         let vehicle = null;
         if (vehicleId && mongoose.isValidObjectId(vehicleId)) {
             vehicle = await Vehicle.findById(vehicleId);
         }
 
-        /* 3. Find matching open lead (if any) */
-        const lead = await Lead.findOne({
-            customer: customer._id,
-            status: { $nin: ["won", "lost"] },
-            ...(vehicle ? { vehicle: vehicle._id } : {}),
-        }).sort("-createdAt");
+        /* 2. Find or create Lead by phone */
+        let lead = await Lead.findOne({ phone });
+        if (!lead) {
+            lead = await Lead.create({
+                name,
+                phone,
+                email,
+                city: location,
+                source: source || "direct_website",
+                attribution: attribution || {},
+                ipAddress: req.ip || req.headers["x-forwarded-for"] || null,
+                status: "new",
+                ...(vehicle ? { vehicle: vehicle._id } : {}),
+            });
+        }
 
-        /* 4. Conflict check — same customer, same vehicle, same 30-min slot */
+        /* 3. Conflict check — same lead, same 30-min slot */
         const slotStart = new Date(when.getTime() - 15 * 60 * 1000);
         const slotEnd = new Date(when.getTime() + 45 * 60 * 1000);
         const clash = await Appointment.findOne({
-            customer: customer._id,
+            lead: lead._id,
             scheduledAt: { $gte: slotStart, $lte: slotEnd },
-            status: { $in: ["scheduled", "confirmed"] },
+            status: { $in: ["Requested", "Confirmed"] },
         });
-        if (clash) return fail(res, "You already have an appointment around this time", 409);
+        if (clash)
+            return fail(res, "You already have an appointment around this time", 409);
 
-        /* 5. Create appointment */
+        /* 4. Create appointment */
         const appointment = await Appointment.create({
-            customer: customer._id,
+            lead: lead._id,
+            customerName: lead.name || name,
+            customerPhone: lead.phone || phone,
             vehicle: vehicle?._id || null,
-            lead: lead?._id || null,
+            vehicleName: vehicle ? `${vehicle.brand} ${vehicle.model}` : null,
             type,
             scheduledAt: when,
             notes,
-            source: source || customer.source || "direct_website",
+            source: source || lead.source || "direct_website",
             attribution: attribution || {},
-            location: req.body.location || customer.city,
+            location: location || lead.city,
+            status: "Requested",
         });
 
-        /* 6. Log activity on the lead */
-        if (lead) {
-            await LeadActivity.create({
-                lead: lead._id,
-                customer: customer._id,
-                type: type === "test_drive" ? "test_drive" : "showroom_visit",
-                title: type === "test_drive" ? "Test drive requested" : "Showroom visit scheduled",
-                description: `Scheduled for ${when.toISOString()}`,
-                meta: { appointmentId: appointment._id, scheduledAt: when },
-            });
+        /* 5. Log activity on the lead */
+        await LeadActivity.create({
+            lead: lead._id,
+            type: type === "test_drive" ? "test_drive" : "showroom_visit",
+            title:
+                type === "test_drive"
+                    ? "Test drive requested"
+                    : "Showroom visit scheduled",
+            description: `Scheduled for ${when.toISOString()}`,
+            meta: { appointmentId: appointment._id, scheduledAt: when },
+        });
 
-            // Move lead status if currently earlier
-            const earlyStages = ["new", "contacted", "qualified", "car_shared"];
-            if (earlyStages.includes(lead.status)) {
-                lead.status = type === "test_drive" ? "test_drive" : "visit_scheduled";
-                lead.updatedBy = null;
-                await lead.save();
-            }
+        /* 6. Move lead status if it's in an early stage */
+        const earlyStages = ["new", "contacted", "qualified", "car_shared"];
+        if (earlyStages.includes(lead.status)) {
+            lead.status = type === "test_drive" ? "test_drive" : "visit_scheduled";
+            lead.updatedBy = null;
+            await lead.save();
         }
+
+        /* 7. Notify the lead (customer) */
         await sendNotification({
-            recipientType: "customer",
-            customerId: customer._id,
-            to: customer.phone,
+            recipientType: "lead",
+            leadId: lead._id,
+            to: lead.phone,
             channel: "whatsapp",
             type: "appointment_scheduled",
-            title: type === "test_drive" ? "Test drive scheduled" : "Showroom visit scheduled",
+            title:
+                type === "test_drive"
+                    ? "Test drive scheduled"
+                    : "Showroom visit scheduled",
             body: `Your appointment is scheduled for ${when.toLocaleString()}.`,
             relatedTo: { appointment: appointment._id, vehicle: appointment.vehicle },
         });
+
         return ok(res, appointment, "Appointment scheduled successfully", 201);
     } catch (err) {
         next(err);
@@ -109,7 +123,7 @@ export const publicCreateAppointment = async (req, res, next) => {
 };
 
 /* ============================================================
-   CRM — List appointments (with calendar filters)
+   CRM — List appointments
    GET /api/v1/appointments
    ============================================================ */
 export const listAppointments = async (req, res, next) => {
@@ -117,13 +131,12 @@ export const listAppointments = async (req, res, next) => {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
         const {
-            status, type, assignedTo, customer,
+            status, type, assignedTo, lead,
             fromDate, toDate, today, upcoming,
         } = req.query;
 
         const filter = {};
 
-        // Sales exec sees own appointments only
         if (req.user.role === "sales_executive") {
             filter.assignedTo = req.user._id;
         } else if (assignedTo) {
@@ -132,7 +145,7 @@ export const listAppointments = async (req, res, next) => {
 
         if (status) filter.status = status;
         if (type) filter.type = type;
-        if (customer) filter.customer = customer;
+        if (lead) filter.lead = lead;
 
         if (fromDate || toDate) {
             filter.scheduledAt = {};
@@ -150,14 +163,13 @@ export const listAppointments = async (req, res, next) => {
 
         if (upcoming === "true") {
             filter.scheduledAt = { $gte: new Date() };
-            filter.status = { $in: ["scheduled", "confirmed"] };
+            filter.status = { $in: ["Requested", "Confirmed"] };
         }
 
         const [data, total] = await Promise.all([
             Appointment.find(filter)
-                .populate("customer", "name phone email city")
+                .populate("lead", "name phone email city status source")
                 .populate("vehicle", "brand model year price images slug")
-                .populate("lead", "status source")
                 .populate("assignedTo", "name email role")
                 .sort("scheduledAt")
                 .skip((page - 1) * limit)
@@ -181,9 +193,8 @@ export const listAppointments = async (req, res, next) => {
 export const getAppointment = async (req, res, next) => {
     try {
         const appointment = await Appointment.findById(req.params.id)
-            .populate("customer", "name phone email city state source")
+            .populate("lead", "name phone email city state source status assignedTo")
             .populate("vehicle", "brand model variant year price images slug status")
-            .populate("lead", "status source assignedTo")
             .populate("assignedTo", "name email role")
             .populate("campaign", "name source type")
             .populate("createdBy", "name")
@@ -205,80 +216,74 @@ export const getAppointment = async (req, res, next) => {
 };
 
 /* ============================================================
-   CRM — Create appointment manually
+   CRM — Create appointment manually (for a Lead)
    POST /api/v1/appointments
    ============================================================ */
 export const createAppointment = async (req, res, next) => {
-  try {
-    const {
-      lead: leadId,
-      customerName,
-      customerPhone,
-      vehicle: vehicleId,
-      vehicleName,
-      type,
-      scheduledAt,
-      time,
-      status,
-      assignedTo,
-      notes,
-    } = req.body;
+    try {
+        const {
+            lead: leadId,
+            customerName,
+            customerPhone,
+            vehicle: vehicleId,
+            vehicleName,
+            type,
+            scheduledAt,
+            time,
+            status,
+            assignedTo,
+            notes,
+        } = req.body;
 
-    // 1. Required fields
-    if (!leadId || !mongoose.isValidObjectId(leadId)) {
-      return fail(res, "A valid lead is required", 400);
+        if (!leadId || !mongoose.isValidObjectId(leadId)) {
+            return fail(res, "A valid lead is required", 400);
+        }
+        if (!scheduledAt) {
+            return fail(res, "Visit date is required", 400);
+        }
+
+        const lead = await Lead.findById(leadId);
+        if (!lead) return fail(res, "Lead not found", 404);
+
+        let vehicle = null;
+        if (vehicleId && mongoose.isValidObjectId(vehicleId)) {
+            vehicle = await Vehicle.findById(vehicleId);
+        }
+
+        const appointment = await Appointment.create({
+            lead: lead._id,
+            customerName: customerName || lead.name || null,
+            customerPhone: customerPhone || lead.phone || null,
+            vehicle: vehicle?._id || null,
+            vehicleName:
+                vehicleName || (vehicle ? `${vehicle.brand} ${vehicle.model}` : null),
+            type: type || "showroom_visit",
+            scheduledAt: new Date(scheduledAt),
+            time: time || null,
+            status: status || "Requested",
+            assignedTo:
+                assignedTo && mongoose.isValidObjectId(assignedTo)
+                    ? assignedTo
+                    : req.user._id,
+            notes,
+            createdBy: req.user._id,
+            updatedBy: req.user._id,
+        });
+
+        await appointment.populate([
+            { path: "lead", select: "name phone email city status source assignedTo" },
+            { path: "vehicle", select: "brand model year price images slug" },
+            { path: "assignedTo", select: "name email role" },
+        ]);
+
+        return ok(res, appointment, "Appointment created", 201);
+    } catch (err) {
+        next(err);
     }
-    if (!scheduledAt) {
-      return fail(res, "Visit date is required", 400);
-    }
-
-    // 2. Resolve lead (appointment is always for a lead)
-    const lead = await Lead.findById(leadId);
-    if (!lead) {
-      return fail(res, "Lead not found", 404);
-    }
-
-    // 3. Resolve vehicle (optional)
-    let vehicle = null;
-    if (vehicleId && mongoose.isValidObjectId(vehicleId)) {
-      vehicle = await Vehicle.findById(vehicleId);
-    }
-
-    // 4. Create appointment
-    const appointment = await Appointment.create({
-      lead: lead._id,
-
-      // Prefer explicitly provided text, else fall back to lead data
-      customerName: customerName || lead.name || null,
-      customerPhone: customerPhone || lead.phone || null,
-
-      vehicle: vehicle?._id || null,
-      vehicleName:
-        vehicleName ||
-        (vehicle ? `${vehicle.brand} ${vehicle.model}` : null),
-
-      type: type || "showroom_visit",
-      scheduledAt: new Date(scheduledAt),
-      time: time || null,
-      status: status || "Requested",
-      assignedTo:
-        assignedTo && mongoose.isValidObjectId(assignedTo)
-          ? assignedTo
-          : req.user._id,
-      notes,
-
-      createdBy: req.user._id,
-      updatedBy: req.user._id,
-    });
-
-    return ok(res, appointment, "Appointment created", 201);
-  } catch (err) {
-    next(err);
-  }
 };
 
 /* ============================================================
-   CRM — Update appointment (From Edit Appointment Modal)
+   CRM — Update appointment
    PATCH /api/v1/appointments/:id
    ============================================================ */
 export const updateAppointment = async (req, res, next) => {
@@ -300,13 +305,17 @@ export const updateAppointment = async (req, res, next) => {
             return fail(res, "Not authorized", 403);
         }
 
-        const { scheduledAt, time, status, customerName, vehicleName, assignedTo, notes } = req.body;
+        const {
+            scheduledAt, time, status,
+            customerName, customerPhone,
+            vehicleName, assignedTo, notes,
+        } = req.body;
 
-        // Update fields from UI
         if (scheduledAt) appointment.scheduledAt = new Date(scheduledAt);
         if (time) appointment.time = time;
         if (status) appointment.status = status;
         if (customerName) appointment.customerName = customerName;
+        if (customerPhone) appointment.customerPhone = customerPhone;
         if (vehicleName) appointment.vehicleName = vehicleName;
         if (assignedTo) appointment.assignedTo = assignedTo;
         if (notes) appointment.notes = notes;
@@ -343,14 +352,13 @@ export const assignAppointment = async (req, res, next) => {
 };
 
 /* ============================================================
-   CRM — Update status (confirmed / completed / no_show / cancelled)
+   CRM — Update status
    PATCH /api/v1/appointments/:id/status
    ============================================================ */
 export const updateAppointmentStatus = async (req, res, next) => {
     try {
         const { status, cancelledReason, cancelledReasonCategory } = req.body;
 
-        // ✅ Updated allowed statuses
         const allowed = ["Requested", "Confirmed", "Completed", "Rescheduled", "Cancelled"];
         if (!allowed.includes(status)) return fail(res, "Invalid status", 400);
 
@@ -373,11 +381,9 @@ export const updateAppointmentStatus = async (req, res, next) => {
 
         await appointment.save();
 
-        // Log on linked lead if exists
         if (appointment.lead) {
             await LeadActivity.create({
                 lead: appointment.lead,
-                customer: appointment.customer,
                 type: "status_change",
                 title: `Appointment ${status}`,
                 description: `Appointment status changed to ${status}`,
@@ -403,13 +409,16 @@ export const rescheduleAppointment = async (req, res, next) => {
         const when = new Date(scheduledAt);
         if (isNaN(when.getTime())) return fail(res, "Invalid scheduledAt", 400);
 
-        const appointment = await Appointment.findById(req.params.id);
+        const appointment = await Appointment.findById(req.params.id).populate(
+            "lead",
+            "name phone"
+        );
         if (!appointment) return fail(res, "Appointment not found", 404);
 
         appointment.rescheduledFrom = appointment.scheduledAt;
         appointment.scheduledAt = when;
         appointment.rescheduledCount += 1;
-        appointment.status = "scheduled";
+        appointment.status = "Rescheduled";
         appointment.notes = reason
             ? `${appointment.notes || ""}\nRescheduled: ${reason}`.trim()
             : appointment.notes;
@@ -419,24 +428,28 @@ export const rescheduleAppointment = async (req, res, next) => {
 
         if (appointment.lead) {
             await LeadActivity.create({
-                lead: appointment.lead,
-                customer: appointment.customer,
+                lead: appointment.lead._id,
                 type: "status_change",
                 title: "Appointment rescheduled",
                 description: `Rescheduled to ${when.toISOString()}${reason ? " — " + reason : ""}`,
                 meta: { appointmentId: appointment._id },
             });
+
+            await sendNotification({
+                recipientType: "lead",
+                leadId: appointment.lead._id,
+                to: appointment.lead.phone,
+                channel: "whatsapp",
+                type: "appointment_rescheduled",
+                title: "Appointment rescheduled",
+                body: `Your appointment has been rescheduled to ${when.toLocaleString()}.`,
+                relatedTo: {
+                    appointment: appointment._id,
+                    vehicle: appointment.vehicle,
+                },
+            });
         }
-        await sendNotification({
-            recipientType: "customer",
-            customerId: customer._id,
-            to: customer.phone,
-            channel: "whatsapp",
-            type: "appointment_scheduled",
-            title: type === "test_drive" ? "Test drive scheduled" : "Showroom visit scheduled",
-            body: `Your appointment is scheduled for ${when.toLocaleString()}.`,
-            relatedTo: { appointment: appointment._id, vehicle: appointment.vehicle },
-        });
+
         return ok(res, appointment, "Appointment rescheduled");
     } catch (err) {
         next(err);
@@ -453,7 +466,8 @@ export const submitFeedback = async (req, res, next) => {
 
         const appointment = await Appointment.findById(req.params.id);
         if (!appointment) return fail(res, "Appointment not found", 404);
-        if (appointment.status !== "completed" && appointment.status !== "no_show")
+
+        if (!["Completed", "Cancelled"].includes(appointment.status))
             return fail(res, "Feedback only allowed after completion", 400);
 
         appointment.feedback = {
@@ -471,10 +485,13 @@ export const submitFeedback = async (req, res, next) => {
     }
 };
 
-
+/* ============================================================
+   CRM — Delete (soft preferred)
+   ============================================================ */
 export const deleteAppointment = async (req, res, next) => {
     try {
         const appointment = await Appointment.findByIdAndDelete(req.params.id);
+        if (!appointment) return fail(res, "Appointment not found", 404);
         return ok(res, {}, "Appointment deleted");
     } catch (err) {
         next(err);
@@ -482,13 +499,15 @@ export const deleteAppointment = async (req, res, next) => {
 };
 
 /* ============================================================
-   CRM — Dashboard stats (BRD 9.1)
+   CRM — Dashboard stats
    GET /api/v1/appointments/stats/summary
    ============================================================ */
 export const getAppointmentStats = async (req, res, next) => {
     try {
         const scopeFilter =
-            req.user.role === "sales_executive" ? { assignedTo: req.user._id } : {};
+            req.user.role === "sales_executive"
+                ? { assignedTo: req.user._id }
+                : {};
 
         const startOfDay = new Date();
         startOfDay.setHours(0, 0, 0, 0);
@@ -501,7 +520,6 @@ export const getAppointmentStats = async (req, res, next) => {
             upcomingCount,
             completedCount,
             cancelledCount,
-            noShowCount,
             byType,
             avgRating,
         ] = await Promise.all([
@@ -513,11 +531,10 @@ export const getAppointmentStats = async (req, res, next) => {
             Appointment.countDocuments({
                 ...scopeFilter,
                 scheduledAt: { $gte: new Date() },
-                status: { $in: ["scheduled", "confirmed"] },
+                status: { $in: ["Requested", "Confirmed"] },
             }),
-            Appointment.countDocuments({ ...scopeFilter, status: "completed" }),
-            Appointment.countDocuments({ ...scopeFilter, status: "cancelled" }),
-            Appointment.countDocuments({ ...scopeFilter, status: "no_show" }),
+            Appointment.countDocuments({ ...scopeFilter, status: "Completed" }),
+            Appointment.countDocuments({ ...scopeFilter, status: "Cancelled" }),
             Appointment.aggregate([
                 { $match: scopeFilter },
                 { $group: { _id: "$type", count: { $sum: 1 } } },
@@ -534,9 +551,10 @@ export const getAppointmentStats = async (req, res, next) => {
             upcoming: upcomingCount,
             completed: completedCount,
             cancelled: cancelledCount,
-            noShow: noShowCount,
             byType,
-            avgRating: avgRating[0]?.avg ? Number(avgRating[0].avg.toFixed(2)) : null,
+            avgRating: avgRating[0]?.avg
+                ? Number(avgRating[0].avg.toFixed(2))
+                : null,
         });
     } catch (err) {
         next(err);
