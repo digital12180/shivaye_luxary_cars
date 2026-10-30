@@ -182,6 +182,7 @@ export const publicCreateLead = async (req, res, next) => {
 
 // Name A-Z: GET /api/v1/leads?sort=name_asc
 
+
 export const listLeads = async (req, res, next) => {
   try {
     const page = Number(req.query.page) || 1;
@@ -225,35 +226,46 @@ export const listLeads = async (req, res, next) => {
       filter.status = { $nin: ["Won", "Lost"] };
     }
 
-    // ✅ Search by customer name/phone/email + lead text fields
+    // ✅ Global search across lead + customer fields
     if (search) {
       const rx = new RegExp(search.trim(), "i");
 
       const matchedCustomers = await Customer.find({
-        $or: [{ name: rx }, { phone: rx }, { email: rx }],
+        $or: [
+          { name:  rx },
+          { phone: rx },
+          { email: rx },
+          { city:  rx },
+        ],
       }).select("_id");
 
       const customerIds = matchedCustomers.map((c) => c._id);
 
       filter.$or = [
-        { requirement: rx },
-        { notes: rx },
-        { brand: rx },
-        { interestedVehicle: rx },
-        { leadNumber: rx },
+        { requirement:        rx },
+        { notes:              rx },
+        { brand:              rx },
+        { interestedVehicle:  rx },
+        { leadNumber:         rx },
+
+        { city:               rx },
+        { "location.city":    rx },
+        { "location.state":   rx },
+        { "location.country": rx },
+
         ...(customerIds.length ? [{ customer: { $in: customerIds } }] : []),
       ];
     }
 
     let sortOptions = { createdAt: -1 };
     switch (sort) {
-      case "recent":          sortOptions = { createdAt: -1 }; break;
-      case "name_asc":        sortOptions = { interestedVehicle: 1 }; break;
-      case "price_low_high":  sortOptions = { budget: 1 }; break;
-      case "price_high_low":  sortOptions = { budget: -1 }; break;
-      case "city_asc":        sortOptions = { city: 1 }; break;
-      case "followup_asc":    sortOptions = { nextFollowUpAt: 1 }; break;
-      default:                sortOptions = { createdAt: -1 };
+      case "recent":         sortOptions = { createdAt: -1 }; break;
+      case "name_asc":       sortOptions = { interestedVehicle: 1 }; break;
+      case "price_low_high": sortOptions = { budget: 1 }; break;
+      case "price_high_low": sortOptions = { budget: -1 }; break;
+      case "city_asc":       sortOptions = { city: 1 }; break;
+      case "followup_asc":   sortOptions = { nextFollowUpAt: 1 }; break;
+      default:               sortOptions = { createdAt: -1 };
     }
 
     const [data, total] = await Promise.all([
