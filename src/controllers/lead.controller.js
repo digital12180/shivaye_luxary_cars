@@ -183,103 +183,97 @@ export const publicCreateLead = async (req, res, next) => {
 // Name A-Z: GET /api/v1/leads?sort=name_asc
 
 export const listLeads = async (req, res, next) => {
-    try {
-        const page = Number(req.query.page) || 1;
-        const limit = Number(req.query.limit) || 20;
-        const {
-            status, source, assignedTo, enquiryType, priority,
-            city, search, fromDate, toDate,
-            followUpToday, overdue, sort,
-        } = req.query;
+  try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const {
+      status, source, assignedTo, enquiryType, priority,
+      city, search, fromDate, toDate,
+      followUpToday, overdue, sort,
+    } = req.query;
 
-        const filter = {};
+    const filter = {};
 
-        // Role-based access
-        if (req.user.role === "sales_executive") {
-            filter.assignedTo = req.user._id;
-        } else if (assignedTo) {
-            filter.assignedTo = assignedTo;
-        }
-
-        // Direct field filters
-        if (status) filter.status = status;
-        if (source) filter.source = source;
-        if (enquiryType) filter.enquiryType = enquiryType;
-        if (priority) filter.priority = priority;
-        if (city) filter.city = new RegExp(city, "i");
-
-        // Date range filter (From & To)
-        if (fromDate || toDate) {
-            filter.createdAt = {};
-            if (fromDate) filter.createdAt.$gte = new Date(fromDate);
-            if (toDate) filter.createdAt.$lte = new Date(toDate);
-        }
-
-        // Follow-up filters
-        if (followUpToday === "true") {
-            const start = new Date();
-            start.setHours(0, 0, 0, 0);
-            const end = new Date();
-            end.setHours(23, 59, 59, 999);
-            filter.nextFollowUpAt = { $gte: start, $lte: end };
-        }
-
-        if (overdue === "true") {
-            filter.nextFollowUpAt = { $lt: new Date() };
-            filter.status = { $nin: ["Won", "Lost"] };
-        }
-
-        if (search) {
-            filter.$or = [
-                { requirement: new RegExp(search, "i") },
-                { notes: new RegExp(search, "i") },
-                { brand: new RegExp(search, "i") },
-                { interestedVehicle: new RegExp(search, "i") },
-            ];
-        }
-        let sortOptions = { createdAt: -1 };
-
-        switch (sort) {
-            case "recent":
-                sortOptions = { createdAt: -1 };
-                break;
-            case "name_asc": 
-                sortOptions = { interestedVehicle: 1 };
-                break;
-            case "price_low_high": 
-                sortOptions = { budget: 1 };
-                break;
-            case "price_high_low":
-                sortOptions = { budget: -1 };
-                break;
-            case "city_asc":
-                sortOptions = { city: 1 };
-                break;
-            case "followup_asc":
-                sortOptions = { nextFollowUpAt: 1 };
-                break;
-            default:
-                sortOptions = { createdAt: -1 };
-        }
-
-        const [data, total] = await Promise.all([
-            Lead.find(filter)
-                .populate("customer", "name phone email city source")
-                .populate("vehicle", "brand model year askingPrice images slug status")
-                .populate("assignedTo", "name email role")
-                .sort(sortOptions) 
-                .skip((page - 1) * limit)
-                .limit(limit),
-            Lead.countDocuments(filter),
-        ]);
-
-        return ok(res, {
-            data,
-            pagination: { total, page, limit, pages: Math.ceil(total / limit) },
-        });
-    } catch (err) {
-        next(err);
+    if (req.user.role === "sales_executive") {
+      filter.assignedTo = req.user._id;
+    } else if (assignedTo) {
+      filter.assignedTo = assignedTo;
     }
+
+    if (status) filter.status = status;
+    if (source) filter.source = source;
+    if (enquiryType) filter.enquiryType = enquiryType;
+    if (priority) filter.priority = priority;
+    if (city) filter.city = new RegExp(city, "i");
+
+    if (fromDate || toDate) {
+      filter.createdAt = {};
+      if (fromDate) filter.createdAt.$gte = new Date(fromDate);
+      if (toDate) filter.createdAt.$lte = new Date(toDate);
+    }
+
+    if (followUpToday === "true") {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      const end = new Date();
+      end.setHours(23, 59, 59, 999);
+      filter.nextFollowUpAt = { $gte: start, $lte: end };
+    }
+
+    if (overdue === "true") {
+      filter.nextFollowUpAt = { $lt: new Date() };
+      filter.status = { $nin: ["Won", "Lost"] };
+    }
+
+    // ✅ Search by customer name/phone/email + lead text fields
+    if (search) {
+      const rx = new RegExp(search.trim(), "i");
+
+      const matchedCustomers = await Customer.find({
+        $or: [{ name: rx }, { phone: rx }, { email: rx }],
+      }).select("_id");
+
+      const customerIds = matchedCustomers.map((c) => c._id);
+
+      filter.$or = [
+        { requirement: rx },
+        { notes: rx },
+        { brand: rx },
+        { interestedVehicle: rx },
+        { leadNumber: rx },
+        ...(customerIds.length ? [{ customer: { $in: customerIds } }] : []),
+      ];
+    }
+
+    let sortOptions = { createdAt: -1 };
+    switch (sort) {
+      case "recent":          sortOptions = { createdAt: -1 }; break;
+      case "name_asc":        sortOptions = { interestedVehicle: 1 }; break;
+      case "price_low_high":  sortOptions = { budget: 1 }; break;
+      case "price_high_low":  sortOptions = { budget: -1 }; break;
+      case "city_asc":        sortOptions = { city: 1 }; break;
+      case "followup_asc":    sortOptions = { nextFollowUpAt: 1 }; break;
+      default:                sortOptions = { createdAt: -1 };
+    }
+
+    const [data, total] = await Promise.all([
+      Lead.find(filter)
+        .populate("customer", "name phone email city source")
+        .populate("vehicle", "brand model year askingPrice images slug status")
+        .populate("assignedTo", "name email role")
+        .sort(sortOptions)
+        .skip((page - 1) * limit)
+        .limit(limit),
+      Lead.countDocuments(filter),
+    ]);
+
+    return ok(res, {
+      data,
+      pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+    });
+  } catch (err) {
+    next(err);
+  }
 };
 
 // GET /api/v1/leads/:id
