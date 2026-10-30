@@ -168,7 +168,12 @@ export const listAppointments = async (req, res, next) => {
 
         const [data, total] = await Promise.all([
             Appointment.find(filter)
-                .populate("lead", "name phone email city status source")
+                .populate({
+                    path: "lead",
+                    select:
+                        "leadNumber status source priority customer city location vehicle",
+                    populate: { path: "customer", select: "name phone email city state" },
+                })
                 .populate("vehicle", "brand model year price images slug")
                 .populate("assignedTo", "name email role")
                 .sort("scheduledAt")
@@ -193,7 +198,15 @@ export const listAppointments = async (req, res, next) => {
 export const getAppointment = async (req, res, next) => {
     try {
         const appointment = await Appointment.findById(req.params.id)
-            .populate("lead", "name phone email city state source status assignedTo")
+            .populate({
+                path: "lead",
+                select:
+                    "leadNumber status source priority requirement budget customer location vehicle assignedTo",
+                populate: [
+                    { path: "customer", select: "name phone email city state" },
+                    { path: "assignedTo", select: "name email role" },
+                ],
+            })
             .populate("vehicle", "brand model variant year price images slug status")
             .populate("assignedTo", "name email role")
             .populate("campaign", "name source type")
@@ -242,7 +255,11 @@ export const createAppointment = async (req, res, next) => {
             return fail(res, "Visit date is required", 400);
         }
 
-        const lead = await Lead.findById(leadId);
+        // ✅ populate customer so we can fall back to real name / phone
+        const lead = await Lead.findById(leadId).populate(
+            "customer",
+            "name phone email city state"
+        );
         if (!lead) return fail(res, "Lead not found", 404);
 
         let vehicle = null;
@@ -252,11 +269,15 @@ export const createAppointment = async (req, res, next) => {
 
         const appointment = await Appointment.create({
             lead: lead._id,
-            customerName: customerName || lead.name || null,
-            customerPhone: customerPhone || lead.phone || null,
+
+            // ✅ fall back to Customer doc, not lead.name / lead.phone
+            customerName: customerName || lead.customer?.name || null,
+            customerPhone: customerPhone || lead.customer?.phone || null,
+
             vehicle: vehicle?._id || null,
             vehicleName:
-                vehicleName || (vehicle ? `${vehicle.brand} ${vehicle.model}` : null),
+                vehicleName ||
+                (vehicle ? `${vehicle.brand} ${vehicle.model}` : null),
             type: type || "showroom_visit",
             scheduledAt: new Date(scheduledAt),
             time: time || null,
@@ -270,9 +291,18 @@ export const createAppointment = async (req, res, next) => {
             updatedBy: req.user._id,
         });
 
+        // ✅ nested populate for the response
         await appointment.populate([
-            { path: "lead", select: "name phone email city status source assignedTo" },
-            { path: "vehicle", select: "brand model year price images slug" },
+            {
+                path: "lead",
+                select:
+                    "leadNumber status source priority requirement budget customer city location vehicle assignedTo",
+                populate: [
+                    { path: "customer", select: "name phone email city state" },
+                    { path: "assignedTo", select: "name email role" },
+                ],
+            },
+            { path: "vehicle", select: "brand model variant year price images slug" },
             { path: "assignedTo", select: "name email role" },
         ]);
 
