@@ -209,74 +209,72 @@ export const getAppointment = async (req, res, next) => {
    POST /api/v1/appointments
    ============================================================ */
 export const createAppointment = async (req, res, next) => {
-    try {
-        const {
-            customer: customerId,
-            customerName, customerPhone,
-            vehicle: vehicleId,
-            vehicleName,
-            type, scheduledAt, time, status,
-            assignedTo, notes
-        } = req.body;
+  try {
+    const {
+      lead: leadId,
+      customerName,
+      customerPhone,
+      vehicle: vehicleId,
+      vehicleName,
+      type,
+      scheduledAt,
+      time,
+      status,
+      assignedTo,
+      notes,
+    } = req.body;
 
-        if (!scheduledAt) return fail(res, "Visit date is required", 400);
-
-        /* 1. Resolve Customer */
-        let customer = null;
-        if (customerId && mongoose.isValidObjectId(customerId)) {
-            customer = await Customer.findById(customerId);
-        }
-
-        // If no ID provided but name/phone exists, create a new customer
-        if (!customer && customerName) {
-            customer = await Customer.findOne({
-                $or: [
-                    { name: customerName },
-                    ...(customerPhone ? [{ phone: customerPhone }] : [])
-                ]
-            });
-
-            if (!customer) {
-                customer = await Customer.create({
-                    name: customerName,
-                    phone: customerPhone || `temp-${Date.now()}`, // Fallback phone if not provided
-                    source: "manual",
-                });
-            }
-        }
-
-        if (!customer) return fail(res, "Customer is required", 400);
-
-        /* 2. Resolve Vehicle */
-        let vehicle = null;
-        if (vehicleId && mongoose.isValidObjectId(vehicleId)) {
-            vehicle = await Vehicle.findById(vehicleId);
-        }
-
-        /* 3. Create Appointment */
-        const appointment = await Appointment.create({
-            customer: customer._id,
-            customerName: customerName || customer.name,
-            customerPhone: customerPhone || customer.phone,
-
-            vehicle: vehicle?._id || null,
-            vehicleName: vehicleName || (vehicle ? `${vehicle.brand} ${vehicle.model}` : null),
-
-            type: type || "showroom_visit",
-            scheduledAt: new Date(scheduledAt),
-            time: time || null,
-            status: status || "Requested",
-            assignedTo: assignedTo || req.user._id,
-            notes,
-
-            createdBy: req.user._id,
-            updatedBy: req.user._id,
-        });
-
-        return ok(res, appointment, "Appointment created", 201);
-    } catch (err) {
-        next(err);
+    // 1. Required fields
+    if (!leadId || !mongoose.isValidObjectId(leadId)) {
+      return fail(res, "A valid lead is required", 400);
     }
+    if (!scheduledAt) {
+      return fail(res, "Visit date is required", 400);
+    }
+
+    // 2. Resolve lead (appointment is always for a lead)
+    const lead = await Lead.findById(leadId);
+    if (!lead) {
+      return fail(res, "Lead not found", 404);
+    }
+
+    // 3. Resolve vehicle (optional)
+    let vehicle = null;
+    if (vehicleId && mongoose.isValidObjectId(vehicleId)) {
+      vehicle = await Vehicle.findById(vehicleId);
+    }
+
+    // 4. Create appointment
+    const appointment = await Appointment.create({
+      lead: lead._id,
+
+      // Prefer explicitly provided text, else fall back to lead data
+      customerName: customerName || lead.name || null,
+      customerPhone: customerPhone || lead.phone || null,
+
+      vehicle: vehicle?._id || null,
+      vehicleName:
+        vehicleName ||
+        (vehicle ? `${vehicle.brand} ${vehicle.model}` : null),
+
+      type: type || "showroom_visit",
+      scheduledAt: new Date(scheduledAt),
+      time: time || null,
+      status: status || "Requested",
+      assignedTo:
+        assignedTo && mongoose.isValidObjectId(assignedTo)
+          ? assignedTo
+          : req.user._id,
+      notes,
+
+      createdBy: req.user._id,
+      updatedBy: req.user._id,
+    });
+
+    return ok(res, appointment, "Appointment created", 201);
+  } catch (err) {
+    next(err);
+  }
 };
 
 /* ============================================================

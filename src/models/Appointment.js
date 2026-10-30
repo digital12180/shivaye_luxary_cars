@@ -12,14 +12,12 @@ const feedbackSchema = new mongoose.Schema(
 
 const appointmentSchema = new mongoose.Schema(
   {
-    customer: {
+    lead: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Customer",
-      required: true,
+      ref: "Lead",
+      required: true,        
       index: true,
     },
-
-    // ✅ NEW: For manual text input (e.g., "Tara Suri")
     customerName: { type: String, trim: true },
     customerPhone: { type: String, trim: true },
 
@@ -138,7 +136,6 @@ const appointmentSchema = new mongoose.Schema(
 
 appointmentSchema.index({ status: 1, scheduledAt: 1 });
 appointmentSchema.index({ assignedTo: 1, scheduledAt: 1 });
-appointmentSchema.index({ customer: 1, status: 1 });
 appointmentSchema.index({ vehicle: 1, scheduledAt: 1 });
 
 appointmentSchema.pre(/^find/, function () {

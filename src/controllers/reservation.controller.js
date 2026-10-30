@@ -6,7 +6,6 @@ import Customer from "../models/Customer.js";
 import Lead from "../models/Lead.js";
 import LeadActivity from "../models/leadActivity.js";
 import Payment from "../models/Payment.js";
-import Campaign from "../models/Campaign.js";
 import { ok, fail } from "../utils/response.js";
 import { sendNotification } from "../services/notification.service.js";
 import { extractAttribution } from "../services/attribution.service.js";
