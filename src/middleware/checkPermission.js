@@ -17,9 +17,9 @@ export const checkPermission = (requiredPermission) => {
       if (user.role === "admin") {
         return next();
       }
-      console.log("------------------------------", user.permissions)
+
       // Check permission
-      const hasPermission = user.permissions.includes(requiredPermission);
+      const hasPermission = user.permissions?.includes(requiredPermission);
 
       if (!hasPermission) {
         return fail(

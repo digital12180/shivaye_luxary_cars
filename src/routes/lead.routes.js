@@ -42,7 +42,6 @@ router.get(
 router.get(
     "/",
     verifyJWT,
-    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager", "hr"),
     checkPermission('Leads_read'),
     listLeads
 );

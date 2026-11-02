@@ -284,12 +284,7 @@ export const verifyPayment = async (req, res, next) => {
   let transactionCommitted = false;
 
   try {
-    const {
-      paymentId,
-      razorpay_order_id,
-      razorpay_payment_id,
-      razorpay_signature,
-    } = req.body;
+    const { paymentId, razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
 
     if (!paymentId || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
       throw new Error("All payment fields are required");
@@ -298,7 +293,6 @@ export const verifyPayment = async (req, res, next) => {
     const payment = await Payment.findOne({ paymentId }).session(session);
     if (!payment) throw new Error("Payment record not found");
 
-    // Idempotent — if already verified, return
     if (payment.status === "paid") {
       await session.commitTransaction();
       transactionCommitted = true;
@@ -314,7 +308,6 @@ export const verifyPayment = async (req, res, next) => {
       throw new Error("Order ID mismatch");
     }
 
-    // Verify signature
     const expected = crypto
       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
       .update(`${razorpay_order_id}|${razorpay_payment_id}`)
@@ -325,20 +318,24 @@ export const verifyPayment = async (req, res, next) => {
       payment.failedAt = new Date();
       payment.failureReason = "Invalid payment signature";
       await payment.save({ session });
-      throw new Error("Invalid payment signature");
+      await session.commitTransaction();          // ✅ persist the failure
+      transactionCommitted = true;
+      return fail(res, "Invalid payment signature", 400);
     }
 
-    // Fetch payment from Razorpay to validate amount
     const rzp = getRazorpay();
     const rzPayment = await rzp.payments.fetch(razorpay_payment_id);
 
     if (Number(rzPayment.amount) !== Math.round(payment.amount * 100)) {
-      throw new Error(
-        `Amount mismatch. Expected ₹${payment.amount}, received ₹${rzPayment.amount / 100}`
-      );
+      payment.status = "failed";
+      payment.failedAt = new Date();
+      payment.failureReason = "Amount mismatch";
+      await payment.save({ session });
+      await session.commitTransaction();
+      transactionCommitted = true;
+      return fail(res, "Amount mismatch", 400);
     }
 
-    // Update payment record
     payment.gatewayPaymentId = razorpay_payment_id;
     payment.gatewaySignature = razorpay_signature;
     payment.status = "paid";
@@ -358,14 +355,21 @@ export const verifyPayment = async (req, res, next) => {
     payment.providerResponse = rzPayment;
     await payment.save({ session });
 
-    // Side effects
-    await handleSuccessfulPayment(payment);
+    // ✅ fetch reservation BEFORE committing
+    const reservation = await Reservation.findById(payment.reservation).session(session);
+    if (!reservation) throw new Error("Reservation not found for payment");
+
+    try {
+      await handleSuccessfulPayment(payment, { session, reservation });
+    } catch (e) {
+      console.error("handleSuccessfulPayment failed:", e);
+      // decide if this should abort — usually not: payment IS verified.
+    }
 
     await session.commitTransaction();
     transactionCommitted = true;
 
     notifyPaymentSuccess(payment, reservation).catch(console.error);
-
 
     return ok(res, {
       paymentId: payment.paymentId,
