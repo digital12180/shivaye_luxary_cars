@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import FollowUp from "../models/followUp.js";
 import Lead from "../models/Lead.js";
+import Vehicle from "../models/Vehicle.js"
 import { ok, fail } from "../utils/response.js";
 
 export const listFollowUps = async (req, res, next) => {
@@ -50,14 +51,17 @@ export const listFollowUps = async (req, res, next) => {
 };
 export const createFollowUp = async (req, res, next) => {
     try {
-        const { lead: leadId, dueDate, time, status, nextAction, assignedTo } = req.body;
+        const { lead: leadId, vehicle: vehicleId, dueDate, time, status, nextAction, assignedTo } = req.body;
+
+        const vehicle = await Vehicle.findById(vehicleId);
+        if (!vehicle) return fail(res, "Vehicle not found", 404);
 
         const lead = await Lead.findById(leadId);
         if (!lead) return fail(res, "Lead not found", 404);
 
         const followUp = await FollowUp.create({
             lead: lead._id,
-            vehicle: lead.vehicle,
+            vehicle: vehicle._id,
             assignedTo: assignedTo || lead.assignedTo || req.user._id,
             dueDate: new Date(dueDate),
             time,
