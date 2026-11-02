@@ -9,13 +9,14 @@ import Lead from "../models/Lead.js";
 import LeadActivity from "../models/leadActivity.js";
 import { ok, fail } from "../utils/response.js";
 import { notifyPaymentSuccess } from "../services/notification.service.js"
+import { configDotenv } from "dotenv";
+configDotenv();
 /* ============================================================
    Razorpay client (lazy init)
    ============================================================ */
 let razorpayClient = null;
 const getRazorpay = () => {
 
-  console.log("Initializing Razorpay client...", process.env.RAZORPAY_KEY_ID);
   if (!razorpayClient) {
     if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
       throw new Error("Razorpay keys not configured");

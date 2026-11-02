@@ -85,9 +85,9 @@ const customerSchema = new mongoose.Schema(
     { timestamps: true }
 );
 
-customerSchema.index({ email: 1, deletedAt: 1 });
-customerSchema.index({ source: 1, createdAt: -1 });
-customerSchema.index({ name: "text", phone: "text", email: "text" });
+// customerSchema.index({ email: 1, deletedAt: 1 });
+// customerSchema.index({ source: 1, createdAt: -1 });
+// customerSchema.index({ name: "text", phone: "text", email: "text" });
 
 customerSchema.pre(/^find/, function () {
     this.where({ deletedAt: null });
