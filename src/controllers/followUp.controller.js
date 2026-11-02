@@ -126,3 +126,25 @@ export const deleteFollowUp = async (req, res, next) => {
         next(err);
     }
 };
+
+export const GetSingleFollowUp = async (req, res, next) => {
+    try {
+
+        const followUp = await FollowUp.findById(req.params.id).populate({
+            path: "lead",
+            select: "leadNumber interestedVehicle status customer",
+            populate: {
+                path: "customer",
+                select: "name email phone city",
+            },
+        })
+            .populate("vehicle", "stockId brand model variant year price images slug")
+            .populate("assignedTo", "name");
+
+        if (!followUp) return fail(res, "Follow-up not found", 404);
+
+        return ok(res, followUp, "Follow-up retrieved");
+    } catch (err) {
+        next(err);
+    }
+};

@@ -91,7 +91,6 @@ const reservationSchema = new mongoose.Schema(
 
         /* ============ Money ============ */
         // ✅ UPDATED: "Deposit (INR)" from Screenshot
-        depositAmount: { type: Number, required: true, min: 0 },
         reservationAmount: { type: Number, min: 0 }, // Kept for backward compatibility
         amountPaid: { type: Number, default: 0, min: 0 },
         amountDue: { type: Number, default: 0, min: 0 },

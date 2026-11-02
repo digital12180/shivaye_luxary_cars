@@ -4,6 +4,7 @@ import {
     createFollowUp,
     updateFollowUp,
     deleteFollowUp,
+    GetSingleFollowUp,
 } from "../controllers/followUp.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 
@@ -15,5 +16,7 @@ router.get("/", restrictTo("admin", "sales_manager", "sales_executive"), listFol
 router.post("/", restrictTo("admin", "sales_manager", "sales_executive"), createFollowUp);
 router.patch("/:id", restrictTo("admin", "sales_manager", "sales_executive"), updateFollowUp);
 router.delete("/:id", restrictTo("admin", "sales_manager"), deleteFollowUp);
+router.get("/:id", restrictTo("admin", "sales_manager", "sales_executive"), GetSingleFollowUp);
+
 
 export default router;

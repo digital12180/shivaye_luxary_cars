@@ -221,6 +221,7 @@ export const createPaymentOrder = async (req, res, next) => {
       },
     });
 
+    console.log('Razorpay order created: ', rzOrder);
     // Save payment record
     const [payment] = await Payment.create([{
       paymentId: generatePaymentId(),
@@ -232,6 +233,8 @@ export const createPaymentOrder = async (req, res, next) => {
       currency: reservation.currency || "INR",
       gateway: "razorpay",
       gatewayOrderId: rzOrder.id,
+      // gatewayPaymentId: rzOrder,
+      // gatewaySignature:,
       status: "initiated",
       idempotencyKey: idempotencyKey || undefined,
       providerResponse: rzOrder,
@@ -263,7 +266,7 @@ export const createPaymentOrder = async (req, res, next) => {
     if (!transactionCommitted && session.inTransaction()) {
       await session.abortTransaction();
     }
-    console.error("Create payment order error:", err.message);
+    console.error("Create payment order error:", err);
     return fail(res, err.message || "Failed to create payment order", 400);
   } finally {
     await session.endSession();
