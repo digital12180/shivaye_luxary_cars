@@ -330,7 +330,7 @@ export const getLead = async (req, res, next) => {
 export const createLead = async (req, res, next) => {
     try {
         const {
-            customer: customerId,
+            customer: customerId,vehicle,
             name, mobile, email,
             enquiryType, interestedVehicle, brand,
             budget, source, assignedTo, status,
@@ -378,7 +378,7 @@ export const createLead = async (req, res, next) => {
         // ---- Create lead ----
         const lead = await Lead.create({
             customer: customer._id,
-            vehicle: null,
+            vehicle: vehicle,
             assignedTo: assignedTo || null,
             enquiryType: enquiryType || "Purchase",
             interestedVehicle: interestedVehicle || "Unknown",
