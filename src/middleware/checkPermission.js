@@ -7,10 +7,8 @@ export const checkPermission = (requiredPermission) => {
       if (!req.user || !req.user._id) {
         return fail(res, "Unauthorized", 401);
       }
-
       // DB se latest user fetch karo (permissions ke liye)
       const user = await User.findById(req.user._id);
-
       if (!user || !user.isActive || user.status !== "active") {
         return fail(res, "User account is inactive or suspended", 403);
       }
@@ -19,9 +17,9 @@ export const checkPermission = (requiredPermission) => {
       if (user.role === "admin") {
         return next();
       }
-
+      console.log("------------------------------", user.permissions)
       // Check permission
-      const hasPermission = user.permissions?.includes(requiredPermission);
+      const hasPermission = user.permissions.includes(requiredPermission);
 
       if (!hasPermission) {
         return fail(

@@ -8,11 +8,6 @@ const followUpSchema = new mongoose.Schema(
             required: true,
             index: true,
         },
-        customer: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "Customer",
-            required: true,
-        },
         vehicle: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Vehicle",

@@ -25,7 +25,6 @@ export const listFollowUps = async (req, res, next) => {
         const [data, total] = await Promise.all([
             FollowUp.find(filter)
                 .populate("lead", "leadNumber interestedVehicle status")
-                .populate("customer", "name phone")
                 .populate("vehicle", "brand model")
                 .populate("assignedTo", "name")
                 .sort("dueDate")
@@ -52,7 +51,6 @@ export const createFollowUp = async (req, res, next) => {
 
         const followUp = await FollowUp.create({
             lead: lead._id,
-            customer: lead.customer,
             vehicle: lead.vehicle,
             assignedTo: assignedTo || lead.assignedTo || req.user._id,
             dueDate: new Date(dueDate),

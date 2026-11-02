@@ -16,6 +16,7 @@ import {
     getSourcePerformance,
 } from "../controllers/lead.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
+import { checkPermission } from "../middleware/checkPermission.js"
 
 const router = Router();
 
@@ -26,7 +27,7 @@ router.post("/public", publicCreateLead);
 router.get(
     "/stats/dashboard",
     verifyJWT,
-    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager","hr"),
+    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager", "hr"),
     getLeadDashboard
 );
 
@@ -41,7 +42,8 @@ router.get(
 router.get(
     "/",
     verifyJWT,
-    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager","hr"),
+    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager", "hr"),
+    checkPermission('Leads_read'),
     listLeads
 );
 
