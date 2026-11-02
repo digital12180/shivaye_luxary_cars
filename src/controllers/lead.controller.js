@@ -8,6 +8,7 @@ import Campaign from "../models/Campaign.js";
 import { notifyLeadAssigned } from "../services/notification.service.js";
 import { extractAttribution } from "../services/attribution.service.js";
 import { captureLocation } from "../services/geolocation.service.js";
+import Brand from "../models/Brand.js"
 
 
 export const publicCreateLead = async (req, res, next) => {
