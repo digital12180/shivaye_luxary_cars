@@ -180,13 +180,6 @@ leadSchema.index({ source: 1, createdAt: -1 });
 leadSchema.index({ enquiryType: 1, status: 1 });
 leadSchema.index({ customer: 1, status: 1 });
 
-leadSchema.index({
-    requirement: "text",
-    notes: "text",
-    brand: "text",
-    interestedVehicle: "text",
-});
-
 leadSchema.pre("save", async function () {
     if (!this.leadNumber) {
         const count = await mongoose.model("Lead").countDocuments();

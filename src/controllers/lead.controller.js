@@ -120,6 +120,15 @@ export const publicCreateLead = async (req, res, next) => {
             vehicle = await Vehicle.findById(vehicleId);
         }
 
+        // 4b. Resolve brand -> ObjectId (schema expects ref: "Brand")
+        let brandId = null;
+        if (vehicle?.brand) {
+            brandId = vehicle.brand;
+        } else if (vehicleBrand) {
+            const brandDoc = await Brand.findOne({ name: vehicleBrand.trim() }).select("_id");
+            brandId = brandDoc?._id || null;
+        }
+
         // 5. Create new lead
         const lead = await Lead.create({
             customer: customer._id,
@@ -129,7 +138,7 @@ export const publicCreateLead = async (req, res, next) => {
             source: source || customer.source || "Website",
             requirement,
             interestedVehicle: vehicleModel || vehicle?.model || "Unknown",
-            brand: vehicleBrand || vehicle?.brand,
+            brand: brandId,
             budget: budgetMin || null,
             notes,
             attribution: {
@@ -184,108 +193,108 @@ export const publicCreateLead = async (req, res, next) => {
 
 
 export const listLeads = async (req, res, next) => {
-  try {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 20;
-    const {
-      status, source, assignedTo, enquiryType, priority,
-      city, search, fromDate, toDate,
-      followUpToday, overdue, sort,
-    } = req.query;
+    try {
+        const page = Number(req.query.page) || 1;
+        const limit = Number(req.query.limit) || 20;
+        const {
+            status, source, assignedTo, enquiryType, priority,
+            city, search, fromDate, toDate,
+            followUpToday, overdue, sort,
+        } = req.query;
 
-    const filter = {};
+        const filter = {};
 
-    if (req.user.role === "sales_executive") {
-      filter.assignedTo = req.user._id;
-    } else if (assignedTo) {
-      filter.assignedTo = assignedTo;
+        if (req.user.role === "sales_executive") {
+            filter.assignedTo = req.user._id;
+        } else if (assignedTo) {
+            filter.assignedTo = assignedTo;
+        }
+
+        if (status) filter.status = status;
+        if (source) filter.source = source;
+        if (enquiryType) filter.enquiryType = enquiryType;
+        if (priority) filter.priority = priority;
+        if (city) filter.city = new RegExp(city, "i");
+
+        if (fromDate || toDate) {
+            filter.createdAt = {};
+            if (fromDate) filter.createdAt.$gte = new Date(fromDate);
+            if (toDate) filter.createdAt.$lte = new Date(toDate);
+        }
+
+        if (followUpToday === "true") {
+            const start = new Date();
+            start.setHours(0, 0, 0, 0);
+            const end = new Date();
+            end.setHours(23, 59, 59, 999);
+            filter.nextFollowUpAt = { $gte: start, $lte: end };
+        }
+
+        if (overdue === "true") {
+            filter.nextFollowUpAt = { $lt: new Date() };
+            filter.status = { $nin: ["Won", "Lost"] };
+        }
+
+        // ✅ Global search across lead + customer fields
+        if (search) {
+            const rx = new RegExp(search.trim(), "i");
+
+            const matchedCustomers = await Customer.find({
+                $or: [
+                    { name: rx },
+                    { phone: rx },
+                    { email: rx },
+                    { city: rx },
+                ],
+            }).select("_id");
+
+            const customerIds = matchedCustomers.map((c) => c._id);
+
+            filter.$or = [
+                { requirement: rx },
+                { notes: rx },
+                { brand: rx },
+                { interestedVehicle: rx },
+                { leadNumber: rx },
+
+                { city: rx },
+                { "location.city": rx },
+                { "location.state": rx },
+                { "location.country": rx },
+
+                ...(customerIds.length ? [{ customer: { $in: customerIds } }] : []),
+            ];
+        }
+
+        let sortOptions = { createdAt: -1 };
+        switch (sort) {
+            case "recent": sortOptions = { createdAt: -1 }; break;
+            case "name_asc": sortOptions = { interestedVehicle: 1 }; break;
+            case "price_low_high": sortOptions = { budget: 1 }; break;
+            case "price_high_low": sortOptions = { budget: -1 }; break;
+            case "city_asc": sortOptions = { city: 1 }; break;
+            case "followup_asc": sortOptions = { nextFollowUpAt: 1 }; break;
+            default: sortOptions = { createdAt: -1 };
+        }
+
+        const [data, total] = await Promise.all([
+            Lead.find(filter)
+                .populate("customer", "name phone email city source")
+                .populate("vehicle", "brand model year askingPrice images slug status")
+                .populate("assignedTo", "name email role")
+                .sort(sortOptions)
+                .skip((page - 1) * limit)
+                .limit(limit),
+            Lead.countDocuments(filter),
+        ]);
+
+        return ok(res, {
+            data,
+            pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+        });
+    } catch (err) {
+        next(err);
     }
-
-    if (status) filter.status = status;
-    if (source) filter.source = source;
-    if (enquiryType) filter.enquiryType = enquiryType;
-    if (priority) filter.priority = priority;
-    if (city) filter.city = new RegExp(city, "i");
-
-    if (fromDate || toDate) {
-      filter.createdAt = {};
-      if (fromDate) filter.createdAt.$gte = new Date(fromDate);
-      if (toDate) filter.createdAt.$lte = new Date(toDate);
-    }
-
-    if (followUpToday === "true") {
-      const start = new Date();
-      start.setHours(0, 0, 0, 0);
-      const end = new Date();
-      end.setHours(23, 59, 59, 999);
-      filter.nextFollowUpAt = { $gte: start, $lte: end };
-    }
-
-    if (overdue === "true") {
-      filter.nextFollowUpAt = { $lt: new Date() };
-      filter.status = { $nin: ["Won", "Lost"] };
-    }
-
-    // ✅ Global search across lead + customer fields
-    if (search) {
-      const rx = new RegExp(search.trim(), "i");
-
-      const matchedCustomers = await Customer.find({
-        $or: [
-          { name:  rx },
-          { phone: rx },
-          { email: rx },
-          { city:  rx },
-        ],
-      }).select("_id");
-
-      const customerIds = matchedCustomers.map((c) => c._id);
-
-      filter.$or = [
-        { requirement:        rx },
-        { notes:              rx },
-        { brand:              rx },
-        { interestedVehicle:  rx },
-        { leadNumber:         rx },
-
-        { city:               rx },
-        { "location.city":    rx },
-        { "location.state":   rx },
-        { "location.country": rx },
-
-        ...(customerIds.length ? [{ customer: { $in: customerIds } }] : []),
-      ];
-    }
-
-    let sortOptions = { createdAt: -1 };
-    switch (sort) {
-      case "recent":         sortOptions = { createdAt: -1 }; break;
-      case "name_asc":       sortOptions = { interestedVehicle: 1 }; break;
-      case "price_low_high": sortOptions = { budget: 1 }; break;
-      case "price_high_low": sortOptions = { budget: -1 }; break;
-      case "city_asc":       sortOptions = { city: 1 }; break;
-      case "followup_asc":   sortOptions = { nextFollowUpAt: 1 }; break;
-      default:               sortOptions = { createdAt: -1 };
-    }
-
-    const [data, total] = await Promise.all([
-      Lead.find(filter)
-        .populate("customer", "name phone email city source")
-        .populate("vehicle", "brand model year askingPrice images slug status")
-        .populate("assignedTo", "name email role")
-        .sort(sortOptions)
-        .skip((page - 1) * limit)
-        .limit(limit),
-      Lead.countDocuments(filter),
-    ]);
-
-    return ok(res, {
-      data,
-      pagination: { total, page, limit, pages: Math.ceil(total / limit) },
-    });
-  } catch (err) {
-    next(err);
-  }
 };
 
 // GET /api/v1/leads/:id
@@ -315,24 +324,40 @@ export const getLead = async (req, res, next) => {
     }
 };
 
-// POST /api/v1/leads  (manual entry / walk-in)
+// POST /api/v1/leads  (manual entry / walk-in
+
 export const createLead = async (req, res, next) => {
     try {
         const {
             customer: customerId,
-            name, mobile, email, // Customer details if creating new
+            name, mobile, email,
             enquiryType, interestedVehicle, brand,
             budget, source, assignedTo, status,
             nextFollowUpAt, city, notes,
         } = req.body;
 
-        let customer;
+        // ---- Validate brand (now ObjectId -> Brand) ----
+        let brandId = null;
+        if (brand) {
+            if (!mongoose.Types.ObjectId.isValid(brand)) {
+                return fail(res, "Invalid brand id", 400);
+            }
+            const brandDoc = await Brand.findById(brand).select("_id");
+            if (!brandDoc) {
+                return fail(res, "Brand not found", 404);
+            }
+            brandId = brandDoc._id;
+        }
 
+        // ---- Resolve / create customer ----
+        let customer;
         if (customerId) {
+            if (!mongoose.Types.ObjectId.isValid(customerId)) {
+                return fail(res, "Invalid customer id", 400);
+            }
             customer = await Customer.findById(customerId);
             if (!customer) return fail(res, "Customer not found", 404);
         } else if (name && mobile) {
-            // Create new customer if not provided
             customer = await Customer.create({
                 name,
                 phone: mobile,
@@ -344,14 +369,20 @@ export const createLead = async (req, res, next) => {
             return fail(res, "Customer ID or Name+Mobile is required", 400);
         }
 
+        // ---- Validate assignedTo (optional ObjectId) ----
+        if (assignedTo && !mongoose.Types.ObjectId.isValid(assignedTo)) {
+            return fail(res, "Invalid assignedTo id", 400);
+        }
+
+        // ---- Create lead ----
         const lead = await Lead.create({
             customer: customer._id,
-            vehicle: null, // Will be linked later if needed
+            vehicle: null,
             assignedTo: assignedTo || null,
             enquiryType: enquiryType || "Purchase",
             interestedVehicle: interestedVehicle || "Unknown",
-            brand,
-            budget: budget || null,
+            brand: brandId,                 // ✅ ObjectId or null
+            budget: budget ?? null,
             source: source || "Website",
             status: status || "New",
             nextFollowUpAt: nextFollowUpAt ? new Date(nextFollowUpAt) : null,
@@ -365,8 +396,8 @@ export const createLead = async (req, res, next) => {
             },
         });
 
-        // Update campaign metric if campaign is linked (needs logic)
-        // await bumpCampaignMetric(campaign?._id, "totalLeads", 1);
+        // populate brand for response so frontend gets { _id, name }
+        await lead.populate("brand", "name");
 
         return ok(res, lead, "Lead created", 201);
     } catch (err) {
