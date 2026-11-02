@@ -13,7 +13,7 @@ export const listFollowUps = async (req, res, next) => {
         if (status) filter.status = status;
         if (leadId) filter.lead = leadId;
         if (assignedTo) filter.assignedTo = assignedTo;
-        
+
         if (dueDate) {
             const start = new Date(dueDate);
             start.setHours(0, 0, 0, 0);
@@ -24,8 +24,15 @@ export const listFollowUps = async (req, res, next) => {
 
         const [data, total] = await Promise.all([
             FollowUp.find(filter)
-                .populate("lead", "leadNumber interestedVehicle status")
-                .populate("vehicle", "brand model")
+                .populate({
+                    path: "lead",
+                    select: "leadNumber interestedVehicle status customer",
+                    populate: {
+                        path: "customer",
+                        select: "name email phone city",
+                    },
+                })
+                .populate("vehicle", "brand model variant year price images slug")
                 .populate("assignedTo", "name")
                 .sort("dueDate")
                 .skip((page - 1) * limit)
@@ -41,7 +48,6 @@ export const listFollowUps = async (req, res, next) => {
         next(err);
     }
 };
-
 export const createFollowUp = async (req, res, next) => {
     try {
         const { lead: leadId, dueDate, time, status, nextAction, assignedTo } = req.body;
@@ -85,7 +91,7 @@ export const updateFollowUp = async (req, res, next) => {
         if (status) followUp.status = status;
         if (nextAction) followUp.nextAction = nextAction;
         if (assignedTo) followUp.assignedTo = assignedTo;
-        
+
         followUp.updatedBy = req.user._id;
         await followUp.save();
 
