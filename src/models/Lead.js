@@ -54,8 +54,10 @@ const leadSchema = new mongoose.Schema(
         },
 
         brand: {
-            type: String,
-            trim: true,
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Brand",
+            default: null,
+            index: true,
         },
 
         budget: {

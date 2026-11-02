@@ -14,6 +14,8 @@ import { notifyPaymentSuccess } from "../services/notification.service.js"
    ============================================================ */
 let razorpayClient = null;
 const getRazorpay = () => {
+
+  console.log("Initializing Razorpay client...", process.env.RAZORPAY_KEY_ID);
   if (!razorpayClient) {
     if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
       throw new Error("Razorpay keys not configured");
