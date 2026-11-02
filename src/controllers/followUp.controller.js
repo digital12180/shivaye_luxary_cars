@@ -33,7 +33,7 @@ export const listFollowUps = async (req, res, next) => {
                         select: "name email phone city",
                     },
                 })
-                .populate("vehicle", "brand model variant year price images slug")
+                .populate("vehicle", "stockId brand model variant year price images slug")
                 .populate("assignedTo", "name")
                 .sort("dueDate")
                 .skip((page - 1) * limit)
