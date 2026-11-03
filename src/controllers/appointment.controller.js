@@ -1,6 +1,5 @@
 import mongoose from "mongoose";
 import Appointment from "../models/Appointment.js";
-import Customer from "../models/Customer.js";
 import Vehicle from "../models/Vehicle.js";
 import Lead from "../models/Lead.js";
 import LeadActivity from "../models/leadActivity.js";

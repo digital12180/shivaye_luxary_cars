@@ -90,7 +90,6 @@ const reservationSchema = new mongoose.Schema(
         },
 
         /* ============ Money ============ */
-        // ✅ UPDATED: "Deposit (INR)" from Screenshot
         reservationAmount: { type: Number, min: 0 }, // Kept for backward compatibility
         amountPaid: { type: Number, default: 0, min: 0 },
         amountDue: { type: Number, default: 0, min: 0 },
@@ -102,7 +101,7 @@ const reservationSchema = new mongoose.Schema(
             index: true,
         },
 
-        paymentStatus: { // Kept for backward compatibility
+        paymentStatus: {
             type: String,
             enum: ["pending", "partial", "paid", "refunded", "failed"],
             default: "pending",
@@ -168,7 +167,13 @@ const reservationSchema = new mongoose.Schema(
         termsAcceptedAt: { type: Date, default: null },
         notes: { type: String, trim: true },
         isActive: { type: Boolean, default: true, index: true },
-
+        attribution: {
+            utmSource: { type: String, trim: true, default: null },
+            utmMedium: { type: String, trim: true, default: null },
+            utmCampaign: { type: String, trim: true, default: null },
+            referrer: { type: String, trim: true, default: null },
+            landingPage: { type: String, trim: true, default: null },
+        },
         /* ============ Audit ============ */
         createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
         updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
@@ -190,7 +195,7 @@ reservationSchema.pre(/^find/, function () {
 
 /* Auto amountDue */
 reservationSchema.pre("save", function () {
-    const total = this.depositAmount || this.reservationAmount || 0;
+    const total = this.reservationAmount || 0;
     this.amountDue = Math.max(0, total - (this.amountPaid || 0));
 });
 

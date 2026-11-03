@@ -28,6 +28,7 @@ const allowedOrigins = [
   "http://localhost:3000",
   "https://shivaye-luxury-cars-crm.vercel.app",
   "https://shivaye-luxury-cars-frontend.vercel.app",
+  "https://shivaye-luxury-cars-crm.onrender.com",
   '*'
 ];
 

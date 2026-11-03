@@ -172,6 +172,136 @@ const buildSnapshots = (vehicle, customer) => ({
    Body: { name, phone, email?, city?, vehicle, lead?, source?,
            attribution?, reservationType?, termsAccepted }
    ============================================================ */
+// export const publicCreateReservation = async (req, res, next) => {
+//     try {
+//         const attribution = extractAttribution(req);
+//         const {
+//             name, phone, email, city,
+//             vehicle: vehicleId,
+//             lead: leadId,
+//             source,
+//             reservationType = "reservation",
+//             termsAccepted,
+//             notes,
+//         } = req.body;
+
+//         console.log("Public reservation request:", {
+//             name, phone, email, city,
+//             vehicleId, leadId, source,
+//             reservationType, termsAccepted, notes,
+//             attribution,
+//         });
+
+//         if (!name || !phone) return fail(res, "Name and phone are required", 400);
+//         if (!vehicleId) return fail(res, "Vehicle is required", 400);
+//         if (!termsAccepted) return fail(res, "Terms must be accepted", 400);
+
+//         /* 1. Vehicle check */
+//         const vehicle = await Vehicle.findById(vehicleId);
+//         if (!vehicle) return fail(res, "Vehicle not found", 404);
+//         if (vehicle.status !== "available")
+//             return fail(res, `Vehicle is currently ${vehicle.status} and cannot be reserved`, 409);
+
+//         /* 2. Existing active reservation on this vehicle? */
+//         const activeReservation = await Reservation.findOne({
+//             vehicle: vehicle._id,
+//             status: { $in: ["initiated", "pending", "confirmed"] },
+//         });
+//         if (activeReservation)
+//             return fail(res, "Vehicle already reserved by another customer", 409);
+
+//         /* 3. Find or create customer */
+//         let customer = await Customer.findOne({ phone });
+//         if (!customer) {
+//             customer = await Customer.create({
+//                 name, phone, email, city,
+//                 source: source || "direct_website",
+//                 ipAddress: req.ip || req.headers["x-forwarded-for"] || null,
+//             });
+//         }
+
+//         /* 4. Link to lead if provided */
+//         let lead = null;
+//         if (leadId && mongoose.isValidObjectId(leadId)) {
+//             lead = await Lead.findById(leadId);
+//         } else {
+//             // Try auto-match
+//             lead = await Lead.findOne({
+//                 customer: customer._id,
+//                 vehicle: vehicle._id,
+//                 status: { $nin: ["won", "lost"] },
+//             }).sort("-createdAt");
+//         }
+
+//         /* 5. Auto-detect campaign */
+//         const campaignId = lead?.campaign || null;
+
+//         /* 6. Reservation amount — client should set this; default fallback */
+//         const reservationAmount =
+//             req.body.reservationAmount ?? Number(process.env.DEFAULT_RESERVATION_AMOUNT || 50000);
+
+//         /* 7. Create reservation */
+//         const { vehicleSnapshot, buyerSnapshot } = buildSnapshots(vehicle, customer);
+//         const holdHours = Number(process.env.RESERVATION_HOLD_HOURS) || 72;
+//         const expiresAt = new Date(Date.now() + holdHours * 60 * 60 * 1000);
+//         const reservation = await Reservation.create({
+//             reservationNumber: await generateReservationNumber(),
+//             customer: customer._id,
+//             vehicle: vehicle._id,
+//             lead: lead?._id || null,
+//             campaign: campaignId,
+//             reservationType,
+//             reservationAmount,
+//             amountPaid: 0,
+//             amountDue: reservationAmount,
+//             paymentStatus: "pending",
+//             status: "pending",
+//             expiresAt,
+//             source: source || customer.source || "direct_website",
+//             termsAccepted: true,
+//             termsAcceptedAt: new Date(),
+//             notes,
+//             vehicleSnapshot,
+//             buyerSnapshot,
+//             attribution
+//         });
+
+//         /* 8. Mark vehicle reserved */
+//         vehicle.status = "reserved";
+//         vehicle.reservedAt = new Date();
+//         vehicle.updatedBy = null;
+//         await vehicle.save();
+
+//         /* 9. Update lead */
+//         if (lead) {
+//             lead.status = "reserved";
+//             lead.updatedBy = null;
+//             await lead.save();
+
+//             await LeadActivity.create({
+//                 lead: lead._id,
+//                 customer: customer._id,
+//                 type: "reservation",
+//                 title: "Vehicle reserved",
+//                 description: `Reservation ${reservation.reservationNumber} created`,
+//                 meta: { reservationId: reservation._id, amount: reservationAmount },
+//             });
+//         }
+
+//         return ok(res, reservation, "Reservation initiated. Please complete payment.", 201);
+//     } catch (err) {
+//         if (err.code === 11000) return fail(res, "Vehicle already reserved", 409);
+//         next(err);
+//     }
+// };
+
+
+const ALLOWED_SOURCES = [
+    "google_ads", "facebook_ads", "instagram", "organic",
+    "direct_website", "whatsapp", "phone", "walk_in",
+    "referral", "manual", "other",
+];
+
 export const publicCreateReservation = async (req, res, next) => {
     try {
         const attribution = extractAttribution(req);
@@ -185,16 +315,14 @@ export const publicCreateReservation = async (req, res, next) => {
             notes,
         } = req.body;
 
-        console.log("Public reservation request:", {
-            name, phone, email, city,
-            vehicleId, leadId, source,
-            reservationType, termsAccepted, notes,
-            attribution,
-        });
-
+        // Validation
         if (!name || !phone) return fail(res, "Name and phone are required", 400);
         if (!vehicleId) return fail(res, "Vehicle is required", 400);
-        if (!termsAccepted) return fail(res, "Terms must be accepted", 400);
+        const termsOk = termsAccepted === true || termsAccepted === "true";
+        if (!termsOk) return fail(res, "Terms must be accepted", 400);
+        if (!mongoose.isValidObjectId(vehicleId)) return fail(res, "Invalid vehicle ID", 400);
+
+        const safeSource = ALLOWED_SOURCES.includes(source) ? source : "direct_website";
 
         /* 1. Vehicle check */
         const vehicle = await Vehicle.findById(vehicleId);
@@ -202,30 +330,29 @@ export const publicCreateReservation = async (req, res, next) => {
         if (vehicle.status !== "available")
             return fail(res, `Vehicle is currently ${vehicle.status} and cannot be reserved`, 409);
 
-        /* 2. Existing active reservation on this vehicle? */
-        const activeReservation = await Reservation.findOne({
-            vehicle: vehicle._id,
-            status: { $in: ["initiated", "pending", "confirmed"] },
-        });
-        if (activeReservation)
-            return fail(res, "Vehicle already reserved by another customer", 409);
+        /* 2. Active reservation check (defence in depth) */
+        const active = await Reservation.findOne({ vehicle: vehicle._id, status: "Active" });
+        if (active) return fail(res, "Vehicle already reserved", 409);
 
-        /* 3. Find or create customer */
-        let customer = await Customer.findOne({ phone });
-        if (!customer) {
-            customer = await Customer.create({
-                name, phone, email, city,
-                source: source || "direct_website",
-                ipAddress: req.ip || req.headers["x-forwarded-for"] || null,
-            });
-        }
+        /* 3. Find or create customer (atomic upsert) */
+        const customer = await Customer.findOneAndUpdate(
+            { phone },
+            {
+                $setOnInsert: {
+                    name, phone, email, city,
+                    source: safeSource,
+                    ipAddress: req.ip || req.headers["x-forwarded-for"] || null,
+                },
+            },
+            { new: true, upsert: true, setDefaultsOnInsert: true }
+        );
 
-        /* 4. Link to lead if provided */
+        /* 4. Lead linkage (verify ownership) */
         let lead = null;
         if (leadId && mongoose.isValidObjectId(leadId)) {
-            lead = await Lead.findById(leadId);
-        } else {
-            // Try auto-match
+            lead = await Lead.findOne({ _id: leadId, customer: customer._id });
+        }
+        if (!lead) {
             lead = await Lead.findOne({
                 customer: customer._id,
                 vehicle: vehicle._id,
@@ -233,51 +360,61 @@ export const publicCreateReservation = async (req, res, next) => {
             }).sort("-createdAt");
         }
 
-        /* 5. Auto-detect campaign */
         const campaignId = lead?.campaign || null;
 
-        /* 6. Reservation amount — client should set this; default fallback */
+        /* 5. Server-side amount (do NOT trust req.body.reservationAmount) */
         const reservationAmount =
-            req.body.reservationAmount ?? Number(process.env.DEFAULT_RESERVATION_AMOUNT || 50000);
+            vehicle.reservationDeposit ||
+            Number(process.env.DEFAULT_RESERVATION_AMOUNT || 50000);
 
-        /* 7. Create reservation */
-        const { vehicleSnapshot, buyerSnapshot } = buildSnapshots(vehicle, customer);
-        const holdHours = Number(process.env.RESERVATION_HOLD_HOURS) || 72;
-        const expiresAt = new Date(Date.now() + holdHours * 60 * 60 * 1000);
-        const reservation = await Reservation.create({
-            reservationNumber: await generateReservationNumber(),
-            customer: customer._id,
-            vehicle: vehicle._id,
-            lead: lead?._id || null,
-            campaign: campaignId,
-            reservationType,
-            reservationAmount,
-            amountPaid: 0,
-            amountDue: reservationAmount,
-            paymentStatus: "pending",
-            status: "pending",
-            expiresAt,
-            source: source || customer.source || "direct_website",
-            termsAccepted: true,
-            termsAcceptedAt: new Date(),
-            notes,
-            vehicleSnapshot,
-            buyerSnapshot,
-            attribution
-        });
+        /* 6. Atomic vehicle claim */
+        const claimed = await Vehicle.findOneAndUpdate(
+            { _id: vehicle._id, status: "available" },
+            { $set: { status: "reserved", reservedAt: new Date() } },
+            { new: true }
+        );
+        if (!claimed) return fail(res, "Vehicle was just reserved by someone else", 409);
 
-        /* 8. Mark vehicle reserved */
-        vehicle.status = "reserved";
-        vehicle.reservedAt = new Date();
-        vehicle.updatedBy = null;
-        await vehicle.save();
+        /* 7. Create reservation (roll back vehicle on failure) */
+        let reservation;
+        try {
+            const { vehicleSnapshot, buyerSnapshot } = buildSnapshots(vehicle, customer);
+            const holdHours = Number(process.env.RESERVATION_HOLD_HOURS) || 72;
+            const expiresAt = new Date(Date.now() + holdHours * 3600 * 1000);
 
-        /* 9. Update lead */
+            reservation = await Reservation.create({
+                reservationNumber: await generateReservationNumber(),
+                customer: customer._id,
+                vehicle: vehicle._id,
+                lead: lead?._id || null,
+                campaign: campaignId,
+                reservationType,
+                reservationAmount,
+                amountPaid: 0,
+                amountDue: reservationAmount,
+                paymentStatus: "pending",
+                status: "Active",                    // ✅ valid enum
+                expiresAt,
+                source: safeSource,
+                termsAccepted: true,
+                termsAcceptedAt: new Date(),
+                notes,
+                vehicleSnapshot,
+                buyerSnapshot,
+                attribution,                         // needs schema field
+            });
+        } catch (createErr) {
+            await Vehicle.updateOne(
+                { _id: vehicle._id, status: "reserved" },
+                { $set: { status: "available", reservedAt: null } }
+            );
+            throw createErr;
+        }
+
+        /* 8. Update lead */
         if (lead) {
             lead.status = "reserved";
-            lead.updatedBy = null;
             await lead.save();
-
             await LeadActivity.create({
                 lead: lead._id,
                 customer: customer._id,
@@ -285,12 +422,16 @@ export const publicCreateReservation = async (req, res, next) => {
                 title: "Vehicle reserved",
                 description: `Reservation ${reservation.reservationNumber} created`,
                 meta: { reservationId: reservation._id, amount: reservationAmount },
-            });
+            }).catch((e) => console.error("LeadActivity failed", e));
         }
 
         return ok(res, reservation, "Reservation initiated. Please complete payment.", 201);
     } catch (err) {
-        if (err.code === 11000) return fail(res, "Vehicle already reserved", 409);
+        if (err.code === 11000) {
+            if (err.keyPattern?.reservationNumber)
+                return fail(res, "Please retry — temporary conflict", 409);
+            return fail(res, "Vehicle already reserved", 409);
+        }
         next(err);
     }
 };

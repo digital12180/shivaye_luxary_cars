@@ -27,14 +27,14 @@ router.post("/public", publicCreateLead);
 router.get(
     "/stats/dashboard",
     verifyJWT,
-    restrictTo("admin", "sales_manager", "sales_executive", "marketing_manager", "hr"),
+    checkPermission('Leads_read'),
     getLeadDashboard
 );
 
 router.get(
     "/stats/source-performance",
     verifyJWT,
-    restrictTo("admin", "sales_manager", "marketing_manager"),
+    checkPermission('Leads_read'),
     getSourcePerformance
 );
 
@@ -49,14 +49,14 @@ router.get(
 router.post(
     "/",
     verifyJWT,
-    restrictTo("admin", "sales_manager", "sales_executive"),
+    checkPermission('Leads_create'),
     createLead
 );
 
 router.get(
     "/:id",
     verifyJWT,
-    restrictTo("admin", "sales_manager", "sales_executive"),
+    checkPermission('Leads_read'),
     getLead
 );
 
