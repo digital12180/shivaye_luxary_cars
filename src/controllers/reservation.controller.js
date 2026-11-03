@@ -479,8 +479,8 @@ export const createReservationManual = async (req, res, next) => {
             depositAmount: Number(depositAmount),
             reservationAmount: Number(depositAmount), // For backward compatibility
 
-            paymentCheck: paymentCheck || "Pending",
-            status: status || "Active",
+            paymentCheck: "Pending",
+            status: "Active",
             transactionReference,
             cancellationRefund,
 
@@ -519,7 +519,6 @@ export const listReservations = async (req, res, next) => {
         } = req.query;
 
         const filter = {};
-
         if (req.user.role === "sales_executive") {
             filter.assignedTo = req.user._id;
         } else if (assignedTo) {
@@ -673,8 +672,22 @@ export const confirmReservation = async (req, res, next) => {
         if (!reservation) return fail(res, "Reservation not found", 404);
         if (reservation.status === "confirmed")
             return fail(res, "Reservation already confirmed", 400);
-        if (["cancelled", "expired", "refunded"].includes(reservation.status))
+        if (["cancelled", "expired", "refunded", "Completed"].includes(reservation.status))
             return fail(res, `Cannot confirm a ${reservation.status} reservation`, 400);
+
+        // ✅ CRITICAL: ensure payment has actually succeeded
+        const paidPayment = await Payment.findOne({
+            reservation: reservation._id,
+            status: "paid",
+        });
+        if (!paidPayment) {
+            return fail(res, "Cannot confirm — no successful payment found on this reservation", 400);
+        }
+
+        // ✅ Optional but recommended: ensure at least the deposit is paid
+        if ((reservation.amountPaid || 0) <= 0) {
+            return fail(res, "Cannot confirm — no amount paid yet", 400);
+        }
 
         reservation.status = "confirmed";
         reservation.confirmedAt = new Date();

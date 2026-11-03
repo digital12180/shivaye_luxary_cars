@@ -362,8 +362,10 @@ export const verifyPayment = async (req, res, next) => {
     try {
       await handleSuccessfulPayment(payment, { session, reservation });
     } catch (e) {
-      console.error("handleSuccessfulPayment failed:", e);
-      // decide if this should abort — usually not: payment IS verified.
+      // rollback payment too — safer than leaving paid-but-unconfirmed
+      await session.abortTransaction();
+      console.error("Reservation confirm failed, rolled back:", e);
+      return fail(res, "Payment verified but reservation update failed. Contact support.", 500);
     }
 
     await session.commitTransaction();

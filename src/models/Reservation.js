@@ -124,6 +124,7 @@ const reservationSchema = new mongoose.Schema(
                 "Cancelled",
                 "Expired",
                 "Completed",
+                "Confirmed",
                 "Refunded",
             ],
             default: "Active",
