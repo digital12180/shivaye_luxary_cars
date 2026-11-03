@@ -713,27 +713,45 @@ export const extendReservation = async (req, res, next) => {
     try {
         const reservation = await Reservation.findById(req.params.id);
         if (!reservation) return fail(res, "Reservation not found", 404);
-        if (!["initiated", "pending", "confirmed"].includes(reservation.status))
-            return fail(res, "Cannot extend this reservation", 400);
+
+        // ✅ FIX: Aapke schema ke according valid Capitalized statuses
+        // Sirf Active aur Confirmed reservations ko extend kiya ja sakta hai
+        const extendableStatuses = ["Active", "Confirmed"];
+
+        if (!extendableStatuses.includes(reservation.status)) {
+            return fail(res, `Cannot extend a reservation with status: ${reservation.status}`, 400);
+        }
+
+        // Check if already paid (Agar payment ho chuki hai, toh extend ka koi matlab nahi)
+        if (reservation.paymentStatus === "paid") {
+            return fail(res, "Reservation is already fully paid and cannot be extended", 400);
+        }
 
         let newExpiry;
         if (req.body.expiresAt) {
             newExpiry = new Date(req.body.expiresAt);
-            if (isNaN(newExpiry.getTime()))
-                return fail(res, "Invalid expiresAt", 400);
+            if (isNaN(newExpiry.getTime())) {
+                return fail(res, "Invalid expiresAt date format", 400);
+            }
+            // Optional: Ensure new expiry is in the future
+            if (newExpiry <= new Date()) {
+                return fail(res, "New expiry date must be in the future", 400);
+            }
         } else {
-            // Default: extend by RESERVATION_HOLD_HOURS from now
+            // Default: extend by RESERVATION_HOLD_HOURS from NOW (or from existing expiry?)
+            // Usually, extension means adding time to the CURRENT time, not the old expiry.
             const holdHours = Number(process.env.RESERVATION_HOLD_HOURS) || 72;
             newExpiry = new Date(Date.now() + holdHours * 60 * 60 * 1000);
         }
 
         reservation.expiresAt = newExpiry;
-        reservation.extendedCount += 1;
+        reservation.extendedCount = (reservation.extendedCount || 0) + 1;
         reservation.extendedAt = new Date();
         reservation.updatedBy = req.user._id;
+
         await reservation.save();
 
-        return ok(res, reservation, `Reservation extended to ${newExpiry.toISOString()}`);
+        return ok(res, reservation, `Reservation extended successfully to ${newExpiry.toISOString()}`);
     } catch (err) {
         next(err);
     }
