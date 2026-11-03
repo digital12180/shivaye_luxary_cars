@@ -752,7 +752,7 @@ export const cancelReservation = async (req, res, next) => {
         if (["completed", "cancelled", "refunded"].includes(reservation.status))
             return fail(res, `Cannot cancel a ${reservation.status} reservation`, 400);
 
-        reservation.status = "cancelled";
+        reservation.status = "Cancelled";
         reservation.cancelledAt = new Date();
         reservation.cancelledBy = "staff";
         reservation.cancellationReason = cancellationReason || null;
@@ -803,7 +803,7 @@ export const completeReservation = async (req, res, next) => {
         const reservation = await Reservation.findById(req.params.id);
         if (!reservation) return fail(res, "Reservation not found", 404);
 
-        reservation.status = "completed";
+        reservation.status = "Completed";
         reservation.convertedAt = new Date();
         if (convertedToSale) reservation.convertedToSale = convertedToSale;
         reservation.updatedBy = req.user._id;
