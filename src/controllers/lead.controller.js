@@ -11,286 +11,164 @@ import { captureLocation } from "../services/geolocation.service.js";
 import Brand from "../models/Brand.js"
 
 
-
 export const publicCreateLead = async (req, res, next) => {
     try {
         const attribution = extractAttribution(req);
         const { ip, location } = await captureLocation(req);
 
         const {
-            name,
-            phone,
-            email,
-            city,
+            name, phone, email, city,
             vehicle: vehicleId,
-            vehicleBrand,
-            vehicleModel,
-            source,
-            leadType,
-            requirement,
-            budgetMin,
-            budgetMax,
-            notes,
-            campaignId,
+            vehicleBrand, vehicleModel, source, leadType,
+            requirement, budgetMin, budgetMax, notes, campaignId,
         } = req.body;
 
         // 1. Validate required fields
-        if (!name || !phone) {
-            return fail(res, "Name and phone are required", 400);
-        }
+        if (!name || !phone) return fail(res, "Name and phone are required", 400);
+        if (!vehicleId) return fail(res, "Vehicle ID is required", 400);
+        if (!mongoose.isValidObjectId(vehicleId)) return fail(res, "Invalid vehicle ID format", 400);
 
-        if (!vehicleId) {
-            return fail(res, "Vehicle ID is required", 400);
-        }
-
-        if (!mongoose.isValidObjectId(vehicleId)) {
-            return fail(res, "Invalid vehicle ID", 400);
-        }
-
-        // 2. Validate vehicle
+        // 2. Validate Vehicle
         const vehicle = await Vehicle.findById(vehicleId);
-
-        if (!vehicle) {
-            return fail(res, "Vehicle not found", 404);
-        }
+        if (!vehicle) return fail(res, `Vehicle not found (id: ${vehicleId})`, 404);
 
         // 3. Resolve / create customer
         let customer = await Customer.findOne({ phone });
-
         if (!customer) {
             customer = await Customer.create({
-                name,
-                phone,
-                email,
-                city,
+                name, phone, email, city,
                 source: source || "direct_website",
                 attribution: attribution || {},
-                ipAddress:
-                    ip ||
-                    req.ip ||
-                    req.headers["x-forwarded-for"] ||
-                    null,
+                ipAddress: ip || req.ip || req.headers["x-forwarded-for"] || null,
                 ipLocation: location || null,
             });
         }
 
-        // 4. Resolve campaign using attribution
+        // 4. Resolve campaign
         let campaign = null;
-
         if (attribution?.utmCampaign) {
-            campaign = await Campaign.findOne({
-                "utm.campaign": attribution.utmCampaign,
-            }).select("_id source type status");
+            campaign = await Campaign.findOne({ "utm.campaign": attribution.utmCampaign }).select("_id");
+        }
+        if (!campaign && campaignId && mongoose.isValidObjectId(campaignId)) {
+            campaign = await Campaign.findById(campaignId).select("_id");
         }
 
-        if (!campaign && attribution?.landingPage) {
-            campaign = await Campaign.findOne({
-                landingPageUrl: attribution.landingPage,
-            }).select("_id source type status");
-        }
-
-        if (
-            !campaign &&
-            campaignId &&
-            mongoose.isValidObjectId(campaignId)
-        ) {
-            campaign = await Campaign.findById(campaignId)
-                .select("_id source type status");
-        }
-
-        // 5. Resolve brand
+        // 5. Resolve brand (FIX FOR ERROR 1)
         let brandId = null;
-
-        if (vehicle.brand) {
-            brandId = vehicle.brand;
-        } else if (vehicleBrand) {
-            const brandDoc = await Brand.findOne({
-                name: vehicleBrand.trim(),
-            }).select("_id");
-
+        // Agar vehicle me brand ka ObjectId hai
+        if (vehicle.brand && mongoose.isValidObjectId(vehicle.brand)) {
+            brandId = vehicle.brand; 
+        } 
+        // Agar vehicle me brand ka String hai (jaise "TATA"), toh Brand collection se dhoondho
+        else if (vehicle.brand || vehicleBrand) {
+            const brandName = vehicle.brand || vehicleBrand;
+            const brandDoc = await Brand.findOne({ name: new RegExp(`^${brandName.trim()}$`, "i") }).select("_id");
             brandId = brandDoc?._id || null;
         }
 
-        // 6. Duplicate lead detection (last 30 days)
-        const DUPLICATE_WINDOW_DAYS = 30;
+        // 6. Handle Source Enum (FIX FOR ERROR 3)
+        // Lead schema me google_ads allowed nahi hai, toh fallback lagao
+        const allowedLeadSources = ["Website", "Manual", "Walk-in", "Referral", "Phone", "Social Media", "Other"];
+        let leadSource = "Website";
+        if (source && allowedLeadSources.includes(source)) {
+            leadSource = source;
+        } else if (source === "google_ads" || source === "facebook_ads") {
+            leadSource = "Website"; // Fallback for ads
+        }
 
-        const since = new Date(
-            Date.now() -
-            DUPLICATE_WINDOW_DAYS * 24 * 60 * 60 * 1000
-        );
+        // 7. Handle Budget (FIX FOR ERROR 2)
+        // Lead schema me budget ek Number hai, Object nahi.
+        const finalBudget = budgetMax || budgetMin || null;
 
-        const duplicateFilter = {
+        // 8. Duplicate lead detection
+        const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const existingLead = await Lead.findOne({
             customer: customer._id,
             vehicle: vehicle._id,
             createdAt: { $gte: since },
             status: { $nin: ["Won", "Lost"] },
-        };
+        }).sort({ createdAt: -1 });
 
-        const existingLead = await Lead.findOne(duplicateFilter)
-            .sort({ createdAt: -1 });
-
-        // 7. Handle duplicate lead
         if (existingLead) {
+            // Update existing lead
             if (attribution) {
-                existingLead.attribution = {
-                    ...(existingLead.attribution?.toObject?.() ||
-                        existingLead.attribution ||
-                        {}),
-                    ...attribution,
-                    latestTouchAt: new Date(),
-                };
+                existingLead.attribution = { ...existingLead.attribution, ...attribution, latestTouchAt: new Date() };
             }
-
-            if (campaign && !existingLead.campaign) {
-                existingLead.campaign = campaign._id;
-            }
-
-            if (requirement) {
-                existingLead.requirement = requirement;
-            }
-
-            if (notes) {
-                existingLead.notes = [
-                    existingLead.notes,
-                    notes,
-                ]
-                    .filter(Boolean)
-                    .join("\n");
-            }
-
-            if (budgetMin != null || budgetMax != null) {
-                existingLead.budget = {
-                    min: budgetMin ?? existingLead.budget?.min ?? null,
-                    max: budgetMax ?? existingLead.budget?.max ?? null,
-                };
-            }
+            if (campaign && !existingLead.campaign) existingLead.campaign = campaign._id;
+            if (requirement) existingLead.requirement = requirement;
+            if (notes) existingLead.notes = [existingLead.notes, notes].filter(Boolean).join("\n");
+            if (finalBudget) existingLead.budget = finalBudget;
 
             await existingLead.save();
 
             await LeadActivity.create({
-                lead: existingLead._id,
-                customer: customer._id,
-                type: "system",
-                title: "Customer re-enquired",
+                lead: existingLead._id, customer: customer._id,
+                type: "system", title: "Customer re-enquired",
                 description: "Duplicate enquiry captured and merged",
-                meta: {
-                    attribution: attribution || {},
-                    vehicle: vehicle._id,
-                    campaign: campaign?._id || null,
-                },
+                meta: { attribution: attribution || {}, vehicle: vehicle._id, campaign: campaign?._id || null },
             });
 
-            // Populate brand for duplicate response
-            await existingLead.populate("brand", "name");
+            // Populate everything before sending response
+            await existingLead.populate([
+                { path: "customer", select: "name phone email city" },
+                { path: "vehicle", select: "brand model year price stockId" },
+                { path: "brand", select: "name" },
+                { path: "campaign", select: "name" }
+            ]);
 
-            return ok(
-                res,
-                {
-                    lead: existingLead,
-                    isDuplicate: true,
-                },
-                "Enquiry linked to existing lead",
-                200
-            );
+            return ok(res, { lead: existingLead, isDuplicate: true }, "Enquiry linked to existing lead", 200);
         }
 
-        // 8. Create new lead
+        // 9. Create new lead
         const lead = await Lead.create({
             customer: customer._id,
             vehicle: vehicle._id,
             campaign: campaign?._id || null,
-
             leadType: leadType || "Purchase",
-            source: source || customer.source || "Website",
-
+            source: leadSource, // ✅ Fixed Enum
             requirement,
-
-            interestedVehicle:
-                vehicleModel || vehicle.model || "Unknown",
-
-            brand: brandId,
-
-            budget: {
-                min: budgetMin ?? null,
-                max: budgetMax ?? null,
-            },
-
+            interestedVehicle: vehicleModel || vehicle.model || "Unknown",
+            brand: brandId, // ✅ Fixed ObjectId
+            budget: finalBudget, // ✅ Fixed Number
             notes,
-
             attribution: {
                 ...(attribution || {}),
                 firstTouchAt: new Date(),
                 latestTouchAt: new Date(),
             },
-
             location: {
-                country:
-                    location?.country ||
-                    customer.ipLocation?.country ||
-                    null,
-
-                state:
-                    location?.state ||
-                    customer.ipLocation?.state ||
-                    null,
-
-                city:
-                    location?.city ||
-                    customer.ipLocation?.city ||
-                    city ||
-                    customer.city ||
-                    null,
+                country: location?.country || customer.ipLocation?.country || null,
+                state: location?.state || customer.ipLocation?.state || null,
+                city: location?.city || customer.ipLocation?.city || city || customer.city || null,
             },
-
-            ipAddress:
-                ip ||
-                req.ip ||
-                req.headers["x-forwarded-for"] ||
-                null,
-
-            createdBy: null,
-            updatedBy: null,
+            ipAddress: ip || req.ip || req.headers["x-forwarded-for"] || null,
+            createdBy: null, updatedBy: null,
         });
 
-        // 9. Populate brand for response
-        await lead.populate("brand", "name");
+        // 10. Populate response exactly like createLead
+        await lead.populate([
+            { path: "customer", select: "name phone email city" },
+            { path: "vehicle", select: "brand model year price stockId" },
+            { path: "brand", select: "name" },
+            { path: "campaign", select: "name" }
+        ]);
 
-        // 10. Log initial activity
+        // 11. Log activity
         await LeadActivity.create({
-            lead: lead._id,
-            customer: customer._id,
-            type: "system",
-            title: "Lead created",
-
-            description: campaign
-                ? `Lead created from ${lead.source} (campaign: ${campaign._id})`
-                : `Lead created from ${lead.source}`,
-
-            meta: {
-                source: lead.source,
-                campaign: campaign?._id || null,
-                utmCampaign: attribution?.utmCampaign || null,
-            },
+            lead: lead._id, customer: customer._id,
+            type: "system", title: "Lead created",
+            description: `Lead created from ${lead.source}`,
+            meta: { source: lead.source, campaign: campaign?._id || null, utmCampaign: attribution?.utmCampaign || null },
         });
 
-        // 11. Success response
-        return ok(
-            res,
-            {
-                lead,
-                isDuplicate: false,
-                campaignMatched: !!campaign,
-            },
-            "Enquiry submitted successfully",
-            201
-        );
+        // 12. Success response
+        return ok(res, { lead, isDuplicate: false, campaignMatched: !!campaign }, "Enquiry submitted successfully", 201);
 
     } catch (err) {
-        console.log("Error in publicCreateLead:", err);
+        console.error("Error in publicCreateLead:", err);
         next(err);
     }
 };
-
 
 /* ================= CRM ================= */
 // Most recent: GET /api/v1/leads?sort=recent
