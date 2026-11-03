@@ -441,8 +441,7 @@ export const createReservationManual = async (req, res, next) => {
         const {
             customer: customerId, customerName, customerPhone,
             vehicle: vehicleId, vehicleName,
-            reservationDate, depositAmount, paymentCheck,
-            status, transactionReference, cancellationRefund
+            reservationDate, depositAmount, transactionReference, cancellationRefund
         } = req.body;
 
         /* 1. Resolve Customer */
