@@ -279,6 +279,120 @@ export const createPaymentOrder = async (req, res, next) => {
    POST /api/v1/payments/public/verify
    Body: { paymentId, razorpay_order_id, razorpay_payment_id, razorpay_signature }
    ============================================================ */
+// export const verifyPayment = async (req, res, next) => {
+//   const session = await mongoose.startSession();
+//   session.startTransaction();
+//   let transactionCommitted = false;
+
+//   try {
+//     const { paymentId, razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+//     if (!paymentId || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+//       throw new Error("All payment fields are required");
+//     }
+
+//     const payment = await Payment.findOne({ paymentId }).session(session);
+//     if (!payment) throw new Error("Payment record not found");
+
+//     if (payment.status === "paid") {
+//       await session.commitTransaction();
+//       transactionCommitted = true;
+//       return ok(res, {
+//         paymentId: payment.paymentId,
+//         reservationId: payment.reservation,
+//         status: payment.status,
+//         invoiceNumber: payment.invoiceNumber,
+//       }, "Payment already verified");
+//     }
+
+//     if (payment.gatewayOrderId !== razorpay_order_id) {
+//       throw new Error("Order ID mismatch");
+//     }
+
+//     const expected = crypto
+//       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+//       .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+//       .digest("hex");
+
+//     if (expected !== razorpay_signature) {
+//       payment.status = "failed";
+//       payment.failedAt = new Date();
+//       payment.failureReason = "Invalid payment signature";
+//       await payment.save({ session });
+//       await session.commitTransaction();          // ✅ persist the failure
+//       transactionCommitted = true;
+//       return fail(res, "Invalid payment signature", 400);
+//     }
+
+//     const rzp = getRazorpay();
+//     const rzPayment = await rzp.payments.fetch(razorpay_payment_id);
+
+//     if (Number(rzPayment.amount) !== Math.round(payment.amount * 100)) {
+//       payment.status = "failed";
+//       payment.failedAt = new Date();
+//       payment.failureReason = "Amount mismatch";
+//       await payment.save({ session });
+//       await session.commitTransaction();
+//       transactionCommitted = true;
+//       return fail(res, "Amount mismatch", 400);
+//     }
+
+//     payment.gatewayPaymentId = razorpay_payment_id;
+//     payment.gatewaySignature = razorpay_signature;
+//     payment.status = "paid";
+//     payment.paidAt = new Date();
+//     payment.signatureVerified = true;
+//     payment.paymentMethod = rzPayment.method || null;
+//     payment.methodDetails = {
+//       type: rzPayment.method,
+//       bank: rzPayment.bank || null,
+//       wallet: rzPayment.wallet || null,
+//       cardLast4: rzPayment.card?.last4 || null,
+//       vpa: rzPayment.vpa || null,
+//       network: rzPayment.card?.network || null,
+//     };
+//     payment.gatewayFee = (rzPayment.fee || 0) / 100;
+//     payment.invoiceNumber = await generateReceiptNumber();
+//     payment.providerResponse = rzPayment;
+//     await payment.save({ session });
+
+//     // ✅ fetch reservation BEFORE committing
+//     const reservation = await Reservation.findById(payment.reservation).session(session);
+//     if (!reservation) throw new Error("Reservation not found for payment");
+
+//     try {
+//       await handleSuccessfulPayment(payment, { session, reservation });
+//     } catch (e) {
+//       // rollback payment too — safer than leaving paid-but-unconfirmed
+//       await session.abortTransaction();
+//       console.error("Reservation confirm failed, rolled back:", e);
+//       return fail(res, "Payment verified but reservation update failed. Contact support.", 500);
+//     }
+
+//     await session.commitTransaction();
+//     transactionCommitted = true;
+
+//     notifyPaymentSuccess(payment, reservation).catch(console.error);
+
+//     return ok(res, {
+//       paymentId: payment.paymentId,
+//       reservationId: payment.reservation,
+//       amount: payment.amount,
+//       status: payment.status,
+//       invoiceNumber: payment.invoiceNumber,
+//     }, "Payment verified successfully");
+
+//   } catch (err) {
+//     if (!transactionCommitted && session.inTransaction()) {
+//       await session.abortTransaction();
+//     }
+//     console.error("Verify payment error:", err.message);
+//     return fail(res, err.message || "Payment verification failed", 400);
+//   } finally {
+//     await session.endSession();
+//   }
+// };
+
 export const verifyPayment = async (req, res, next) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -297,90 +411,69 @@ export const verifyPayment = async (req, res, next) => {
     if (payment.status === "paid") {
       await session.commitTransaction();
       transactionCommitted = true;
-      return ok(res, {
-        paymentId: payment.paymentId,
-        reservationId: payment.reservation,
-        status: payment.status,
-        invoiceNumber: payment.invoiceNumber,
-      }, "Payment already verified");
+      return ok(res, { paymentId: payment.paymentId, status: payment.status }, "Payment already verified");
     }
 
-    if (payment.gatewayOrderId !== razorpay_order_id) {
-      throw new Error("Order ID mismatch");
-    }
+    if (payment.gatewayOrderId !== razorpay_order_id) throw new Error("Order ID mismatch");
 
-    const expected = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-      .digest("hex");
-
-    if (expected !== razorpay_signature) {
-      payment.status = "failed";
-      payment.failedAt = new Date();
-      payment.failureReason = "Invalid payment signature";
-      await payment.save({ session });
-      await session.commitTransaction();          // ✅ persist the failure
-      transactionCommitted = true;
-      return fail(res, "Invalid payment signature", 400);
-    }
+    // ... (Razorpay Signature verification logic same rahega) ...
+    const expected = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET).update(`${razorpay_order_id}|${razorpay_payment_id}`).digest("hex");
+    if (expected !== razorpay_signature) throw new Error("Invalid payment signature");
 
     const rzp = getRazorpay();
     const rzPayment = await rzp.payments.fetch(razorpay_payment_id);
 
     if (Number(rzPayment.amount) !== Math.round(payment.amount * 100)) {
-      payment.status = "failed";
-      payment.failedAt = new Date();
-      payment.failureReason = "Amount mismatch";
-      await payment.save({ session });
-      await session.commitTransaction();
-      transactionCommitted = true;
-      return fail(res, "Amount mismatch", 400);
+      throw new Error("Amount mismatch");
     }
 
-    payment.gatewayPaymentId = razorpay_payment_id;
-    payment.gatewaySignature = razorpay_signature;
-    payment.status = "paid";
-    payment.paidAt = new Date();
-    payment.signatureVerified = true;
-    payment.paymentMethod = rzPayment.method || null;
-    payment.methodDetails = {
-      type: rzPayment.method,
-      bank: rzPayment.bank || null,
-      wallet: rzPayment.wallet || null,
-      cardLast4: rzPayment.card?.last4 || null,
-      vpa: rzPayment.vpa || null,
-      network: rzPayment.card?.network || null,
-    };
-    payment.gatewayFee = (rzPayment.fee || 0) / 100;
-    payment.invoiceNumber = await generateReceiptNumber();
-    payment.providerResponse = rzPayment;
-    await payment.save({ session });
-
-    // ✅ fetch reservation BEFORE committing
+    // ✅ STEP 1: Check if Vehicle is still Available
     const reservation = await Reservation.findById(payment.reservation).session(session);
     if (!reservation) throw new Error("Reservation not found for payment");
 
-    try {
-      await handleSuccessfulPayment(payment, { session, reservation });
-    } catch (e) {
-      // rollback payment too — safer than leaving paid-but-unconfirmed
-      await session.abortTransaction();
-      console.error("Reservation confirm failed, rolled back:", e);
-      return fail(res, "Payment verified but reservation update failed. Contact support.", 500);
+    const vehicle = await Vehicle.findById(reservation.vehicle).session(session);
+    if (!vehicle) throw new Error("Vehicle not found");
+
+    // AGAR GAADI KISI AUR NE BOOK KAR LI HAI (Race Condition)
+    if (vehicle.status !== "Available") {
+      // Payment kat chuka hai, par gaadi nahi hai. Isko handle karna padega (Refund initiated)
+      throw new Error("Vehicle was just reserved by someone else. Please contact support for refund.");
     }
+
+    // ✅ STEP 2: Atomically Claim Vehicle
+    const claimed = await Vehicle.findOneAndUpdate(
+      { _id: vehicle._id, status: "Available" },
+      { $set: { status: "Reserved", reservedAt: new Date() } },
+      { new: true, session }
+    );
+
+    if (!claimed) {
+      throw new Error("Vehicle was just reserved by someone else. Please contact support for refund.");
+    }
+
+    // ✅ STEP 3: Update Payment
+    payment.gatewayPaymentId = razorpay_payment_id;
+    payment.status = "paid";
+    payment.paidAt = new Date();
+    payment.signatureVerified = true;
+    payment.invoiceNumber = await generateReceiptNumber();
+    await payment.save({ session });
+
+    // ✅ STEP 4: Update Reservation
+    // (Yeh handleSuccessfulPayment function ke andar bhi ho sakta hai, par yahan direct kar rahe hain for clarity)
+    reservation.amountPaid = payment.amount;
+    reservation.amountDue = Math.max(0, reservation.reservationAmount - payment.amount);
+    reservation.paymentStatus = "paid";
+    reservation.status = "Confirmed";
+    reservation.confirmedAt = new Date();
+    await reservation.save({ session });
 
     await session.commitTransaction();
     transactionCommitted = true;
 
     notifyPaymentSuccess(payment, reservation).catch(console.error);
 
-    return ok(res, {
-      paymentId: payment.paymentId,
-      reservationId: payment.reservation,
-      amount: payment.amount,
-      status: payment.status,
-      invoiceNumber: payment.invoiceNumber,
-    }, "Payment verified successfully");
+    return ok(res, { status: payment.status, reservationId: reservation._id }, "Payment verified successfully");
 
   } catch (err) {
     if (!transactionCommitted && session.inTransaction()) {
@@ -474,36 +567,38 @@ export const razorpayWebhook = async (req, res) => {
 
     payment.webhookReceivedAt = new Date();
 
+    // ... Webhook signature verify hone ke baad ...
+
     if (eventType === "payment.captured" || eventType === "payment.authorized") {
       if (payment.status !== "paid") {
-        payment.gatewayPaymentId = payload.id;
-        payment.paymentMethod = payload.method || null;
-        payment.methodDetails = {
-          type: payload.method,
-          bank: payload.bank || null,
-          wallet: payload.wallet || null,
-          cardLast4: payload.card?.last4 || null,
-          vpa: payload.vpa || null,
-          network: payload.card?.network || null,
-        };
-        payment.gatewayFee = (payload.fee || 0) / 100;
+
+        const reservation = await Reservation.findById(payment.reservation).session(session);
+        if (!reservation) throw new Error("Reservation not found");
+
+        // ✅ Claim Vehicle ONLY after payment is captured
+        const claimed = await Vehicle.findOneAndUpdate(
+          { _id: reservation.vehicle, status: "Available" },
+          { $set: { status: "Reserved", reservedAt: new Date() } },
+          { new: true, session }
+        );
+
+        if (!claimed) {
+          // Paisa aa gaya par gaadi available nahi hai. (Need refund)
+          throw new Error("Vehicle already reserved. Payment needs refund.");
+        }
+
+        // Update Payment
         payment.status = "paid";
         payment.paidAt = new Date();
-        payment.signatureVerified = true;
-        if (!payment.invoiceNumber) {
-          payment.invoiceNumber = await generateReceiptNumber();
-        }
-        payment.providerResponse = payload;
+        // ... (baaki payment fields)
         await payment.save({ session });
 
-        // ✅ FIX: Reservation fetch karo session ke andar
-        const reservation = await Reservation.findById(payment.reservation).session(session);
-        if (!reservation) {
-          throw new Error("Reservation not found for payment");
-        }
-
-        // ✅ FIX: Ab reservation variable pass karo
-        await handleSuccessfulPayment(payment, { session, reservation });
+        // Update Reservation
+        reservation.status = "Confirmed";
+        reservation.paymentStatus = "paid";
+        reservation.amountPaid = payment.amount;
+        reservation.amountDue = Math.max(0, reservation.reservationAmount - payment.amount);
+        await reservation.save({ session });
       }
     } else if (eventType === "payment.failed") {
       if (payment.status !== "paid") {
