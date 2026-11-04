@@ -11,9 +11,12 @@ import { sendNotification } from "../services/notification.service.js";
 import { extractAttribution } from "../services/attribution.service.js";
 import { notifyReservationConfirmed } from "../services/notification.service.js"
 
-const generateReservationNumber = async () => {
-    const count = await Reservation.countDocuments();
-    return `RS-${String(count + 7600).padStart(4, "0")}`; // Starts from RS-7600
+const generateReservationNumber = () => {
+    const date = new Date();
+    // RS-241104-XXXX (Year, Month, Date - Random 4 digit)
+    const dateStr = `${String(date.getFullYear()).slice(-2)}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
+    const randomStr = Math.floor(1000 + Math.random() * 9000); // 1000 se 9999 tak random number
+    return `RS-${dateStr}-${randomStr}`;
 };
 
 export const expireStaleReservations = async () => {
@@ -334,8 +337,14 @@ export const publicCreateReservation = async (req, res, next) => {
         /* 1. Vehicle check */
         const vehicle = await Vehicle.findById(vehicleId);
         if (!vehicle) return fail(res, "Vehicle not found", 404);
-        if (vehicle.status !== "available")
+
+        console.log("Vehicle Status in DB:", vehicle.status); // 👈 Debugging ke liye
+
+        // ✅ FIX: Capitalized "Available" check aur sahi condition
+        if (vehicle.status !== "Available") {
             return fail(res, `Vehicle is currently ${vehicle.status} and cannot be reserved`, 409);
+        }
+
         const active = await Reservation.findOne({ vehicle: vehicle._id, status: "Active" });
         if (active) return fail(res, "Vehicle already reserved", 409);
 
@@ -376,9 +385,10 @@ export const publicCreateReservation = async (req, res, next) => {
         }
 
         /* 6. Atomic vehicle claim */
+        // ✅ FIX: Yahan bhi "Available" (capital A) check karein
         const claimed = await Vehicle.findOneAndUpdate(
-            { _id: vehicle._id, status: "available" },
-            { $set: { status: "reserved", reservedAt: new Date() } },
+            { _id: vehicle._id, status: "Available" },
+            { $set: { status: "Reserved", reservedAt: new Date() } },
             { new: true }
         );
         if (!claimed) return fail(res, "Vehicle was just reserved by someone else", 409);
@@ -397,11 +407,11 @@ export const publicCreateReservation = async (req, res, next) => {
                 lead: lead?._id || null,
                 campaign: campaignId,
                 reservationType,
-                reservationAmount: reservationAmount, // ✅ NEW LOGIC APPLIED
+                reservationAmount: reservationAmount,
                 amountPaid: 0,
                 amountDue: reservationAmount,
                 paymentStatus: "pending",
-                status: "Active", // ✅ valid enum
+                status: "Active",
                 expiresAt,
                 source: safeSource,
                 termsAccepted: true,
@@ -413,9 +423,10 @@ export const publicCreateReservation = async (req, res, next) => {
             });
         } catch (createErr) {
             // Rollback vehicle if reservation creation fails
+            // ✅ FIX: Rollback me bhi "Available" capital A
             await Vehicle.updateOne(
-                { _id: vehicle._id, status: "reserved" },
-                { $set: { status: "available", reservedAt: null } }
+                { _id: vehicle._id, status: "Reserved" },
+                { $set: { status: "Available", reservedAt: null } }
             );
             throw createErr;
         }
