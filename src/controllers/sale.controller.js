@@ -177,7 +177,7 @@ export const listSales = async (req, res, next) => {
         const {
             paymentStatus, salesExecutive, brand, source,
             deliveryStatus, fromDate, toDate, search,
-            sort, // ✅ Added sort query param
+            sort, 
         } = req.query;
 
         const filter = {};

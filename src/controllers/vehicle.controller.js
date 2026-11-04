@@ -5,9 +5,20 @@ import Category from "../models/Category.js";
 import { ok, fail } from "../utils/response.js";
 import { uploadMultipleToCloudinary, uploadToCloudinary, deleteMultipleFromCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js";
 
-const generateStockId = async () => {
-    const count = await Vehicle.countDocuments();
-    return `SLC-${String(count + 1).padStart(5, "0")}`;
+const generateStockId = () => {
+    const now = new Date();
+
+    // Year (2 digit) - Month - Date
+    const datePart = `${String(now.getFullYear()).slice(-2)}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+
+    // Hours - Minutes - Seconds (24-hour format)
+    const timePart = `${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+
+    // 3 Random Digits (000 se 999)
+    const randomPart = String(Math.floor(Math.random() * 1000)).padStart(3, "0");
+
+    // Final Output: SLC-241105-143022-123
+    return `SLC-${datePart}-${timePart}-${randomPart}`;
 };
 
 export const listVehicles = async (req, res, next) => {
