@@ -336,12 +336,9 @@ export const publicCreateReservation = async (req, res, next) => {
         if (!vehicle) return fail(res, "Vehicle not found", 404);
         if (vehicle.status !== "available")
             return fail(res, `Vehicle is currently ${vehicle.status} and cannot be reserved`, 409);
-
-        /* 2. Active reservation check (defence in depth) */
         const active = await Reservation.findOne({ vehicle: vehicle._id, status: "Active" });
         if (active) return fail(res, "Vehicle already reserved", 409);
 
-        /* 3. Find or create customer (atomic upsert) */
         const customer = await Customer.findOneAndUpdate(
             { phone },
             {
