@@ -184,10 +184,10 @@ const reservationSchema = new mongoose.Schema(
 );
 
 /* ============ Indexes ============ */
-reservationSchema.index({ status: 1, paymentCheck: 1 });
-reservationSchema.index({ customer: 1, status: 1 });
-reservationSchema.index({ vehicle: 1, status: 1 });
-reservationSchema.index({ createdAt: -1 });
+// reservationSchema.index({ status: 1, paymentCheck: 1 });
+// reservationSchema.index({ customer: 1, status: 1 });
+// reservationSchema.index({ vehicle: 1, status: 1 });
+// reservationSchema.index({ createdAt: -1 });
 
 /* Soft delete */
 reservationSchema.pre(/^find/, function () {

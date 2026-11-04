@@ -57,8 +57,8 @@ export const publicCreateLead = async (req, res, next) => {
         let brandId = null;
         // Agar vehicle me brand ka ObjectId hai
         if (vehicle.brand && mongoose.isValidObjectId(vehicle.brand)) {
-            brandId = vehicle.brand; 
-        } 
+            brandId = vehicle.brand;
+        }
         // Agar vehicle me brand ka String hai (jaise "TATA"), toh Brand collection se dhoondho
         else if (vehicle.brand || vehicleBrand) {
             const brandName = vehicle.brand || vehicleBrand;
@@ -221,10 +221,11 @@ export const listLeads = async (req, res, next) => {
             filter.status = { $nin: ["Won", "Lost"] };
         }
 
-        // ✅ Global search across lead + customer fields
+        // ✅ Global search across lead + customer + brand fields
         if (search) {
             const rx = new RegExp(search.trim(), "i");
 
+            // 1. Find matching customers
             const matchedCustomers = await Customer.find({
                 $or: [
                     { name: rx },
@@ -236,19 +237,27 @@ export const listLeads = async (req, res, next) => {
 
             const customerIds = matchedCustomers.map((c) => c._id);
 
+            // 2. Find matching brands (Assuming you have a Brand model. If brands are stored as strings in another collection, adjust this query)
+            // Note: If you don't have a separate Brand collection, you can skip this and remove { brand: { $in: brandIds } } below.
+            const matchedBrands = await Brand.find({ name: rx }).select("_id");
+            const brandIds = matchedBrands.map((b) => b._id);
+
+            // 3. Build the $or filter
             filter.$or = [
                 { requirement: rx },
                 { notes: rx },
-                { brand: rx },
                 { interestedVehicle: rx },
                 { leadNumber: rx },
-
                 { city: rx },
                 { "location.city": rx },
                 { "location.state": rx },
                 { "location.country": rx },
 
+                // Add matched customer IDs
                 ...(customerIds.length ? [{ customer: { $in: customerIds } }] : []),
+
+                // Add matched brand IDs (Only if brandIds has items)
+                ...(brandIds.length ? [{ brand: { $in: brandIds } }] : []),
             ];
         }
 
