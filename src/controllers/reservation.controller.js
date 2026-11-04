@@ -653,10 +653,10 @@ export const createReservationManual = async (req, res, next) => {
         }
 
         /* 3. Calculate Reservation Amount */
-        let finalDepositAmount = Number(depositAmount); // Staff override (if provided)
+        let finalDepositAmount=25000; // Staff override (if provided)
 
         // Agar staff ne amount nahi diya, toh auto-calculate karo vehicle price se
-        if (!finalDepositAmount && vehicle) {
+        if (vehicle) {
             const vehiclePrice = Number(vehicle.price) || 0;
             finalDepositAmount = 25000; // Default for <= 25L
 
