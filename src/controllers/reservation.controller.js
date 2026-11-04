@@ -377,7 +377,7 @@ export const publicCreateReservation = async (req, res, next) => {
 
         /* 5. Calculate Reservation Amount (NEW RULE) */
         // Uptil 25 Lakhs -> 25k, Above 25 Lakhs -> 10%
-        const vehiclePrice = Number(vehicle.price) || 0;
+        const vehiclePrice = Number(vehicle.askingPrice) || 0;
         let reservationAmount = 25000; // Default for <= 25L
 
         if (vehiclePrice > 2500000) {
