@@ -53,27 +53,27 @@ const handleSuccessfulPayment = async (payment, { session, reservation } = {}) =
 
   // Agar session pass nahi hua hai, toh naya reservation fetch karo
   if (!reservation) {
-      reservation = await Reservation.findById(payment.reservation).session(session || null);
-      if (!reservation) throw new Error("Reservation not found for this payment");
+    reservation = await Reservation.findById(payment.reservation).session(session || null);
+    if (!reservation) throw new Error("Reservation not found for this payment");
   }
 
   // 1. Update reservation money state
   reservation.amountPaid = (reservation.amountPaid || 0) + payment.amount;
   reservation.amountDue = Math.max(0, reservation.reservationAmount - reservation.amountPaid);
   reservation.paymentStatus = reservation.amountDue === 0 ? "paid" : "partial";
-  
+
   // ✅ FIX: Capitalized "Confirmed" use karein (schema ke according)
-  reservation.status = "Confirmed"; 
+  reservation.status = "Confirmed";
   reservation.confirmedAt = new Date();
   reservation.payment = payment._id;
-  
+
   await reservation.save({ session });
 
   // 2. Vehicle status update (✅ FIX: Capitalized "Reserved")
   await Vehicle.findByIdAndUpdate(
-      reservation.vehicle, 
-      { status: "Reserved" }, 
-      { session }
+    reservation.vehicle,
+    { status: "Reserved" },
+    { session }
   );
 
   // 3. Lead update & activity log
@@ -88,9 +88,9 @@ const handleSuccessfulPayment = async (payment, { session, reservation } = {}) =
     }], { session });
 
     await Lead.findByIdAndUpdate(
-        reservation.lead, 
-        { status: "booked" }, 
-        { session }
+      reservation.lead,
+      { status: "booked" },
+      { session }
     );
   }
 
@@ -496,7 +496,14 @@ export const razorpayWebhook = async (req, res) => {
         payment.providerResponse = payload;
         await payment.save({ session });
 
-        await handleSuccessfulPayment(payment);
+        // ✅ FIX: Reservation fetch karo session ke andar
+        const reservation = await Reservation.findById(payment.reservation).session(session);
+        if (!reservation) {
+          throw new Error("Reservation not found for payment");
+        }
+
+        // ✅ FIX: Ab reservation variable pass karo
+        await handleSuccessfulPayment(payment, { session, reservation });
       }
     } else if (eventType === "payment.failed") {
       if (payment.status !== "paid") {
@@ -507,7 +514,8 @@ export const razorpayWebhook = async (req, res) => {
         payment.providerResponse = payload;
         await payment.save({ session });
 
-        await handleFailedPayment(payment);
+        // ✅ FIX: Session pass karo agar aapke handleFailedPayment me DB operations hain
+        await handleFailedPayment(payment, { session });
       }
     } else if (eventType === "refund.processed") {
       // Only update if this payment already has a refund object
