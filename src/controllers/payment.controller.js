@@ -48,46 +48,55 @@ const generateReceiptNumber = async () => {
    Side effects — on successful payment
    BRD 8.2 + Section 13 (Notifications)
    ============================================================ */
-const handleSuccessfulPayment = async (payment) => {
+const handleSuccessfulPayment = async (payment, { session, reservation } = {}) => {
   if (!payment.reservation) return;
 
-  const reservation = await Reservation.findById(payment.reservation);
-  if (!reservation) return;
+  // Agar session pass nahi hua hai, toh naya reservation fetch karo
+  if (!reservation) {
+      reservation = await Reservation.findById(payment.reservation).session(session || null);
+      if (!reservation) throw new Error("Reservation not found for this payment");
+  }
 
-  // Update reservation money state
+  // 1. Update reservation money state
   reservation.amountPaid = (reservation.amountPaid || 0) + payment.amount;
-  reservation.amountDue = Math.max(
-    0,
-    reservation.reservationAmount - reservation.amountPaid
-  );
+  reservation.amountDue = Math.max(0, reservation.reservationAmount - reservation.amountPaid);
   reservation.paymentStatus = reservation.amountDue === 0 ? "paid" : "partial";
-  reservation.status = "confirmed";
+  
+  // ✅ FIX: Capitalized "Confirmed" use karein (schema ke according)
+  reservation.status = "Confirmed"; 
   reservation.confirmedAt = new Date();
   reservation.payment = payment._id;
-  await reservation.save();
+  
+  await reservation.save({ session });
 
-  // Vehicle stays reserved
-  await Vehicle.findByIdAndUpdate(reservation.vehicle, {
-    status: "reserved",
-  });
+  // 2. Vehicle status update (✅ FIX: Capitalized "Reserved")
+  await Vehicle.findByIdAndUpdate(
+      reservation.vehicle, 
+      { status: "Reserved" }, 
+      { session }
+  );
 
-  // Lead → booked + activity log
+  // 3. Lead update & activity log
   if (reservation.lead) {
-    await LeadActivity.create({
+    await LeadActivity.create([{
       lead: reservation.lead,
       customer: reservation.customer,
       type: "payment",
       title: "Reservation payment received",
       description: `Amount: ₹${payment.amount} (${payment.paymentId})`,
       meta: { paymentId: payment._id, amount: payment.amount },
-    });
+    }], { session });
 
-    await Lead.findByIdAndUpdate(reservation.lead, { status: "booked" });
+    await Lead.findByIdAndUpdate(
+        reservation.lead, 
+        { status: "booked" }, 
+        { session }
+    );
   }
 
-  // WhatsApp + SMS notification to customer (BRD 13)
+  // 4. Notification (Isko try-catch me rakhein taaki notification fail hone se DB transaction na ruke)
   try {
-    const customer = await Customer.findById(payment.customer);
+    const customer = await Customer.findById(payment.customer).session(session);
     if (customer) {
       await sendNotification({
         recipientType: "customer",
@@ -96,16 +105,7 @@ const handleSuccessfulPayment = async (payment) => {
         channel: "whatsapp",
         type: "payment_success",
         title: "Payment received",
-        body: `Thank you ${customer.name}. We have received ₹${payment.amount} for reservation ${reservation.reservationNumber}. Invoice: ${payment.invoiceNumber || "-"}`,
-        template: {
-          name: "payment_received",
-          language: "en",
-          variables: {
-            name: customer.name,
-            amount: payment.amount,
-            reservationNumber: reservation.reservationNumber,
-          },
-        },
+        body: `Thank you ${customer.name}. We have received ₹${payment.amount} for reservation ${reservation.reservationNumber}.`,
         relatedTo: {
           payment: payment._id,
           reservation: reservation._id,
@@ -114,7 +114,8 @@ const handleSuccessfulPayment = async (payment) => {
       });
     }
   } catch (err) {
-    console.error("Notification failed:", err.message);
+    // Notification fail hone par transaction abort NAHI hona chahiye
+    console.error("Notification failed (but payment successful):", err.message);
   }
 };
 

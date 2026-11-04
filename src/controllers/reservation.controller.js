@@ -305,6 +305,158 @@ const ALLOWED_SOURCES = [
     "referral", "manual", "other",
 ];
 
+// export const publicCreateReservation = async (req, res, next) => {
+//     try {
+//         const attribution = extractAttribution(req);
+//         const {
+//             name, phone, email, city,
+//             vehicle: vehicleId,
+//             lead: leadId,
+//             source,
+//             reservationType = "reservation",
+//             termsAccepted,
+//             notes,
+//         } = req.body;
+
+//         // Validation
+//         if (!name || !phone) return fail(res, "Name and phone are required", 400);
+//         if (!vehicleId) return fail(res, "Vehicle is required", 400);
+
+//         const termsOk = termsAccepted === true || termsAccepted === "true";
+//         if (!termsOk) return fail(res, "Terms must be accepted", 400);
+
+//         if (!mongoose.isValidObjectId(vehicleId)) return fail(res, "Invalid vehicle ID", 400);
+
+//         const ALLOWED_SOURCES = [
+//             "google_ads", "facebook_ads", "instagram", "organic",
+//             "direct_website", "whatsapp", "phone", "walk_in",
+//             "referral", "manual", "other",
+//         ];
+//         const safeSource = ALLOWED_SOURCES.includes(source) ? source : "direct_website";
+
+//         /* 1. Vehicle check */
+//         const vehicle = await Vehicle.findById(vehicleId);
+//         if (!vehicle) return fail(res, "Vehicle not found", 404);
+
+//         console.log("Vehicle Status in DB:", vehicle.status); // 👈 Debugging ke liye
+
+//         // ✅ FIX: Capitalized "Available" check aur sahi condition
+//         if (vehicle.status !== "Available") {
+//             return fail(res, `Vehicle is currently ${vehicle.status} and cannot be reserved`, 409);
+//         }
+
+//         const active = await Reservation.findOne({ vehicle: vehicle._id, status: "Active" });
+//         if (active) return fail(res, "Vehicle already reserved", 409);
+
+//         const customer = await Customer.findOneAndUpdate(
+//             { phone },
+//             {
+//                 $setOnInsert: {
+//                     name, phone, email, city,
+//                     source: safeSource,
+//                     ipAddress: req.ip || req.headers["x-forwarded-for"] || null,
+//                 },
+//             },
+//             { new: true, upsert: true, setDefaultsOnInsert: true }
+//         );
+
+//         /* 4. Lead linkage (verify ownership) */
+//         let lead = null;
+//         if (leadId && mongoose.isValidObjectId(leadId)) {
+//             lead = await Lead.findOne({ _id: leadId, customer: customer._id });
+//         }
+//         if (!lead) {
+//             lead = await Lead.findOne({
+//                 customer: customer._id,
+//                 vehicle: vehicle._id,
+//                 status: { $nin: ["won", "lost"] },
+//             }).sort("-createdAt");
+//         }
+
+//         const campaignId = lead?.campaign || null;
+
+//         /* 5. Calculate Reservation Amount (NEW RULE) */
+//         // Uptil 25 Lakhs -> 25k, Above 25 Lakhs -> 10%
+//         const vehiclePrice = Number(vehicle.askingPrice) || 0;
+//         let reservationAmount = 25000; // Default for <= 25L
+
+//         if (vehiclePrice > 2500000) {
+//             reservationAmount = vehiclePrice * 0.10; // 10% for > 25L
+//         }
+
+//         /* 6. Atomic vehicle claim */
+//         // ✅ FIX: Yahan bhi "Available" (capital A) check karein
+//         const claimed = await Vehicle.findOneAndUpdate(
+//             { _id: vehicle._id, status: "Available" },
+//             { $set: { status: "Reserved", reservedAt: new Date() } },
+//             { new: true }
+//         );
+//         if (!claimed) return fail(res, "Vehicle was just reserved by someone else", 409);
+
+//         /* 7. Create reservation (roll back vehicle on failure) */
+//         let reservation;
+//         try {
+//             const { vehicleSnapshot, buyerSnapshot } = buildSnapshots(vehicle, customer);
+//             const holdHours = Number(process.env.RESERVATION_HOLD_HOURS) || 72;
+//             const expiresAt = new Date(Date.now() + holdHours * 3600 * 1000);
+
+//             reservation = await Reservation.create({
+//                 reservationNumber: await generateReservationNumber(),
+//                 customer: customer._id,
+//                 vehicle: vehicle._id,
+//                 lead: lead?._id || null,
+//                 campaign: campaignId,
+//                 reservationType,
+//                 reservationAmount: reservationAmount,
+//                 amountPaid: 0,
+//                 amountDue: reservationAmount,
+//                 paymentStatus: "pending",
+//                 status: "Active",
+//                 expiresAt,
+//                 source: safeSource,
+//                 termsAccepted: true,
+//                 termsAcceptedAt: new Date(),
+//                 notes,
+//                 vehicleSnapshot,
+//                 buyerSnapshot,
+//                 attribution,
+//             });
+//         } catch (createErr) {
+//             // Rollback vehicle if reservation creation fails
+//             // ✅ FIX: Rollback me bhi "Available" capital A
+//             await Vehicle.updateOne(
+//                 { _id: vehicle._id, status: "Reserved" },
+//                 { $set: { status: "Available", reservedAt: null } }
+//             );
+//             throw createErr;
+//         }
+
+//         /* 8. Update lead */
+//         if (lead) {
+//             lead.status = "reserved";
+//             await lead.save();
+//             await LeadActivity.create({
+//                 lead: lead._id,
+//                 customer: customer._id,
+//                 type: "reservation",
+//                 title: "Vehicle reserved",
+//                 description: `Reservation ${reservation.reservationNumber} created`,
+//                 meta: { reservationId: reservation._id, amount: reservationAmount },
+//             }).catch((e) => console.error("LeadActivity failed", e));
+//         }
+
+//         return ok(res, reservation, "Reservation initiated. Please complete payment.", 201);
+//     } catch (err) {
+//         if (err.code === 11000) {
+//             if (err.keyPattern?.reservationNumber)
+//                 return fail(res, "Please retry — temporary conflict", 409);
+//             return fail(res, "Vehicle already reserved", 409);
+//         }
+//         next(err);
+//     }
+// };
+
+
 export const publicCreateReservation = async (req, res, next) => {
     try {
         const attribution = extractAttribution(req);
@@ -338,15 +490,30 @@ export const publicCreateReservation = async (req, res, next) => {
         const vehicle = await Vehicle.findById(vehicleId);
         if (!vehicle) return fail(res, "Vehicle not found", 404);
 
-        console.log("Vehicle Status in DB:", vehicle.status); // 👈 Debugging ke liye
-
-        // ✅ FIX: Capitalized "Available" check aur sahi condition
+        // ✅ FIX: Capitalized "Available" check
         if (vehicle.status !== "Available") {
             return fail(res, `Vehicle is currently ${vehicle.status} and cannot be reserved`, 409);
         }
 
-        const active = await Reservation.findOne({ vehicle: vehicle._id, status: "Active" });
-        if (active) return fail(res, "Vehicle already reserved", 409);
+        /* 2. Handle stale Active reservations */
+        // Agar gaadi Available hai, toh iska matlab purana reservation cancel ho chuka hona chahiye.
+        // Lekin agar database me kisi galti se purana reservation "Active" pada hai, toh hum use auto-cancel kar denge.
+        const activeReservations = await Reservation.find({ vehicle: vehicle._id, status: "Active" });
+        
+        if (activeReservations.length > 0) {
+            // Purane active reservations ko cancel kar do
+            await Reservation.updateMany(
+                { vehicle: vehicle._id, status: "Active" },
+                { 
+                    $set: { 
+                        status: "Cancelled", 
+                        cancelledAt: new Date(),
+                        cancellationReason: "Auto-cancelled: Vehicle marked available for new booking",
+                        cancelledBy: "system"
+                    } 
+                }
+            );
+        }
 
         const customer = await Customer.findOneAndUpdate(
             { phone },
@@ -381,7 +548,7 @@ export const publicCreateReservation = async (req, res, next) => {
         let reservationAmount = 25000; // Default for <= 25L
 
         if (vehiclePrice > 2500000) {
-            reservationAmount = vehiclePrice * 0.10; // 10% for > 25L
+            reservationAmount = 50000; 
         }
 
         /* 6. Atomic vehicle claim */
