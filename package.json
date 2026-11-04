@@ -28,7 +28,8 @@
     "node-cron": "^4.6.0",
     "nodemailer": "^10.2.1",
     "razorpay": "^2.9.8",
-    "socket.io": "^4.8.4"
+    "socket.io": "^4.8.4",
+    "twilio": "^6.2.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

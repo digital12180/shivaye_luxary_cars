@@ -318,10 +318,17 @@ export const publicCreateReservation = async (req, res, next) => {
         // Validation
         if (!name || !phone) return fail(res, "Name and phone are required", 400);
         if (!vehicleId) return fail(res, "Vehicle is required", 400);
+
         const termsOk = termsAccepted === true || termsAccepted === "true";
         if (!termsOk) return fail(res, "Terms must be accepted", 400);
+
         if (!mongoose.isValidObjectId(vehicleId)) return fail(res, "Invalid vehicle ID", 400);
 
+        const ALLOWED_SOURCES = [
+            "google_ads", "facebook_ads", "instagram", "organic",
+            "direct_website", "whatsapp", "phone", "walk_in",
+            "referral", "manual", "other",
+        ];
         const safeSource = ALLOWED_SOURCES.includes(source) ? source : "direct_website";
 
         /* 1. Vehicle check */
@@ -362,10 +369,14 @@ export const publicCreateReservation = async (req, res, next) => {
 
         const campaignId = lead?.campaign || null;
 
-        /* 5. Server-side amount (do NOT trust req.body.reservationAmount) */
-        const reservationAmount =
-            vehicle.reservationDeposit ||
-            Number(process.env.DEFAULT_RESERVATION_AMOUNT || 50000);
+        /* 5. Calculate Reservation Amount (NEW RULE) */
+        // Uptil 25 Lakhs -> 25k, Above 25 Lakhs -> 10%
+        const vehiclePrice = Number(vehicle.price) || 0;
+        let reservationAmount = 25000; // Default for <= 25L
+
+        if (vehiclePrice > 2500000) {
+            reservationAmount = vehiclePrice * 0.10; // 10% for > 25L
+        }
 
         /* 6. Atomic vehicle claim */
         const claimed = await Vehicle.findOneAndUpdate(
@@ -389,11 +400,11 @@ export const publicCreateReservation = async (req, res, next) => {
                 lead: lead?._id || null,
                 campaign: campaignId,
                 reservationType,
-                reservationAmount,
+                reservationAmount: reservationAmount, // ✅ NEW LOGIC APPLIED
                 amountPaid: 0,
                 amountDue: reservationAmount,
                 paymentStatus: "pending",
-                status: "Active",                    // ✅ valid enum
+                status: "Active", // ✅ valid enum
                 expiresAt,
                 source: safeSource,
                 termsAccepted: true,
@@ -401,9 +412,10 @@ export const publicCreateReservation = async (req, res, next) => {
                 notes,
                 vehicleSnapshot,
                 buyerSnapshot,
-                attribution,                         // needs schema field
+                attribution,
             });
         } catch (createErr) {
+            // Rollback vehicle if reservation creation fails
             await Vehicle.updateOne(
                 { _id: vehicle._id, status: "reserved" },
                 { $set: { status: "available", reservedAt: null } }
@@ -465,7 +477,22 @@ export const createReservationManual = async (req, res, next) => {
             vehicle = await Vehicle.findById(vehicleId);
         }
 
-        /* 3. Create Reservation */
+        /* 3. Calculate Reservation Amount */
+        let finalDepositAmount = Number(depositAmount); // Staff override (if provided)
+
+        // Agar staff ne amount nahi diya, toh auto-calculate karo vehicle price se
+        if (!finalDepositAmount && vehicle) {
+            const vehiclePrice = Number(vehicle.price) || 0;
+            finalDepositAmount = 25000; // Default for <= 25L
+
+            if (vehiclePrice > 2500000) {
+                finalDepositAmount = vehiclePrice * 0.10; // 10%
+            }
+        } else if (!finalDepositAmount && !vehicle) {
+            finalDepositAmount = 25000; // Fallback if no vehicle and no amount
+        }
+
+        /* 4. Create Reservation */
         const reservation = await Reservation.create({
             reservationNumber: await generateReservationNumber(),
             customer: customer?._id || null,
@@ -475,9 +502,9 @@ export const createReservationManual = async (req, res, next) => {
             vehicle: vehicle?._id || null,
             vehicleName: vehicleName || (vehicle ? `${vehicle.brand} ${vehicle.model}` : null),
 
-            depositAmount: Number(depositAmount),
-            reservationAmount: Number(depositAmount), // For backward compatibility
-
+            reservationAmount: finalDepositAmount, // ✅ YAHAN UPDATE HUA HAI
+            amountPaid: 0,
+            amountDue: finalDepositAmount,
             paymentCheck: "Pending",
             status: "Active",
             transactionReference,
@@ -491,7 +518,7 @@ export const createReservationManual = async (req, res, next) => {
 
         // If vehicle is attached, mark it as reserved
         if (vehicle) {
-            vehicle.status = "Reserved";
+            vehicle.status = "reserved";
             vehicle.reservedAt = new Date();
             await vehicle.save();
         }
