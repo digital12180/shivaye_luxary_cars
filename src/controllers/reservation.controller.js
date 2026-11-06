@@ -13,112 +13,49 @@ import { notifyReservationConfirmed } from "../services/notification.service.js"
 
 const generateReservationNumber = () => {
     const date = new Date();
-    // RS-241104-XXXX (Year, Month, Date - Random 4 digit)
     const dateStr = `${String(date.getFullYear()).slice(-2)}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
-    const randomStr = Math.floor(1000 + Math.random() * 9000); // 1000 se 9999 tak random number
+    const randomStr = Math.floor(1000 + Math.random() * 9000);
     return `RS-${dateStr}-${randomStr}`;
 };
 
 export const expireStaleReservations = async () => {
     const now = new Date();
-    const batchSize = 50;
 
-    // Find all reservations whose hold window has passed
-    // while still unpaid/pending.
     const stale = await Reservation.find({
-        status: { $in: ["initiated", "pending"] },
+        status: "Active",                             // ✅ FIX
         paymentStatus: { $in: ["pending", "partial"] },
-        expiresAt: { $ne: null, $lt: now },
-        deletedAt: null,
-    }).limit(batchSize);
+        expiresAt: { $lt: now },
+    }).limit(50);
 
-    if (stale.length === 0) return { expired: 0 };
+    let count = 0;
+    for (const res of stale) {
+        res.status = "Expired";                       // ✅ FIX
+        res.cancelledAt = now;
+        res.cancelledBy = "system";
+        res.cancellationReason = "Hold period expired";
+        res.cancellationCategory = "expired";
+        await res.save();
 
-    let expiredCount = 0;
+        await Vehicle.findByIdAndUpdate(res.vehicle, {
+            status: "Available",                        // ✅ FIX
+            reservedAt: null,
+        });
 
-    for (const reservation of stale) {
-        try {
-            /* 1. Mark reservation as expired */
-            reservation.status = "expired";
-            reservation.cancelledAt = now;
-            reservation.cancelledBy = "system";
-            reservation.cancellationReason = "Hold period expired";
-            reservation.cancellationCategory = "expired";
-            await reservation.save();
-
-            /* 2. Release the vehicle back to available */
-            await Vehicle.findByIdAndUpdate(reservation.vehicle, {
-                status: "available",
-                reservedAt: null,
+        if (res.lead) {
+            await Lead.findByIdAndUpdate(res.lead, { status: "Negotiation" });  // ✅ FIX
+            await LeadActivity.create({
+                lead: res.lead,
+                customer: res.customer,
+                type: "system",
+                title: "Reservation expired",
+                description: `Hold expired for reservation ${res.reservationNumber}`,
+                meta: { reservationId: res._id },
             });
-
-            /* 3. Roll lead back to negotiation stage */
-            if (reservation.lead) {
-                const lead = await Lead.findById(reservation.lead);
-                if (lead && lead.status === "reserved") {
-                    lead.status = "negotiation";
-                    await lead.save();
-                }
-
-                await LeadActivity.create({
-                    lead: reservation.lead,
-                    customer: reservation.customer,
-                    type: "system",
-                    title: "Reservation expired",
-                    description: `Hold expired for reservation ${reservation.reservationNumber}`,
-                    meta: { reservationId: reservation._id, expiresAt: reservation.expiresAt },
-                });
-            }
-
-            /* 4. Notify customer via WhatsApp */
-            const customer = await Customer.findById(reservation.customer);
-            if (customer) {
-                try {
-                    await sendNotification({
-                        recipientType: "customer",
-                        customerId: customer._id,
-                        to: customer.phone,
-                        channel: "whatsapp",
-                        type: "reservation_expiring",
-                        title: "Reservation expired",
-                        body: `Hi ${customer.name}, your reservation ${reservation.reservationNumber} has expired because payment was not completed. The vehicle is now available to other customers. You can reserve again anytime.`,
-                        template: {
-                            name: "reservation_expired",
-                            language: "en",
-                            variables: {
-                                name: customer.name,
-                                reservationNumber: reservation.reservationNumber,
-                            },
-                        },
-                        relatedTo: {
-                            reservation: reservation._id,
-                            vehicle: reservation.vehicle,
-                        },
-                    });
-                } catch (notifyErr) {
-                    console.error(
-                        `Notification failed for reservation ${reservation.reservationNumber}:`,
-                        notifyErr.message
-                    );
-                }
-            }
-
-            expiredCount++;
-        } catch (err) {
-            console.error(
-                `Failed to expire reservation ${reservation._id}:`,
-                err.message
-            );
         }
+        count++;
     }
 
-    if (expiredCount > 0) {
-        console.log(
-            `[Cron] Expired ${expiredCount} stale reservation(s) at ${now.toISOString()}`
-        );
-    }
-
-    return { expired: expiredCount };
+    return { expired: count };
 };
 
 export const startReservationExpiryJob = () => {
@@ -138,9 +75,7 @@ export const startReservationExpiryJob = () => {
                 console.error("[Cron] Reservation expiry job crashed:", err.message);
             }
         },
-        {
-            timezone: process.env.TZ || "Asia/Kolkata",
-        }
+        { timezone: process.env.TZ || "Asia/Kolkata" }
     );
 
     console.log(`[Cron] Reservation expiry job scheduled: ${schedule}`);
@@ -169,461 +104,16 @@ const buildSnapshots = (vehicle, customer) => ({
     },
 });
 
-/* ============================================================
-   PUBLIC — Initiate reservation (BRD 8.1)
-   POST /api/v1/reservations/public
-   Body: { name, phone, email?, city?, vehicle, lead?, source?,
-           attribution?, reservationType?, termsAccepted }
-   ============================================================ */
-// export const publicCreateReservation = async (req, res, next) => {
-//     try {
-//         const attribution = extractAttribution(req);
-//         const {
-//             name, phone, email, city,
-//             vehicle: vehicleId,
-//             lead: leadId,
-//             source,
-//             reservationType = "reservation",
-//             termsAccepted,
-//             notes,
-//         } = req.body;
-
-//         console.log("Public reservation request:", {
-//             name, phone, email, city,
-//             vehicleId, leadId, source,
-//             reservationType, termsAccepted, notes,
-//             attribution,
-//         });
-
-//         if (!name || !phone) return fail(res, "Name and phone are required", 400);
-//         if (!vehicleId) return fail(res, "Vehicle is required", 400);
-//         if (!termsAccepted) return fail(res, "Terms must be accepted", 400);
-
-//         /* 1. Vehicle check */
-//         const vehicle = await Vehicle.findById(vehicleId);
-//         if (!vehicle) return fail(res, "Vehicle not found", 404);
-//         if (vehicle.status !== "available")
-//             return fail(res, `Vehicle is currently ${vehicle.status} and cannot be reserved`, 409);
-
-//         /* 2. Existing active reservation on this vehicle? */
-//         const activeReservation = await Reservation.findOne({
-//             vehicle: vehicle._id,
-//             status: { $in: ["initiated", "pending", "confirmed"] },
-//         });
-//         if (activeReservation)
-//             return fail(res, "Vehicle already reserved by another customer", 409);
-
-//         /* 3. Find or create customer */
-//         let customer = await Customer.findOne({ phone });
-//         if (!customer) {
-//             customer = await Customer.create({
-//                 name, phone, email, city,
-//                 source: source || "direct_website",
-//                 ipAddress: req.ip || req.headers["x-forwarded-for"] || null,
-//             });
-//         }
-
-//         /* 4. Link to lead if provided */
-//         let lead = null;
-//         if (leadId && mongoose.isValidObjectId(leadId)) {
-//             lead = await Lead.findById(leadId);
-//         } else {
-//             // Try auto-match
-//             lead = await Lead.findOne({
-//                 customer: customer._id,
-//                 vehicle: vehicle._id,
-//                 status: { $nin: ["won", "lost"] },
-//             }).sort("-createdAt");
-//         }
-
-//         /* 5. Auto-detect campaign */
-//         const campaignId = lead?.campaign || null;
-
-//         /* 6. Reservation amount — client should set this; default fallback */
-//         const reservationAmount =
-//             req.body.reservationAmount ?? Number(process.env.DEFAULT_RESERVATION_AMOUNT || 50000);
-
-//         /* 7. Create reservation */
-//         const { vehicleSnapshot, buyerSnapshot } = buildSnapshots(vehicle, customer);
-//         const holdHours = Number(process.env.RESERVATION_HOLD_HOURS) || 72;
-//         const expiresAt = new Date(Date.now() + holdHours * 60 * 60 * 1000);
-//         const reservation = await Reservation.create({
-//             reservationNumber: await generateReservationNumber(),
-//             customer: customer._id,
-//             vehicle: vehicle._id,
-//             lead: lead?._id || null,
-//             campaign: campaignId,
-//             reservationType,
-//             reservationAmount,
-//             amountPaid: 0,
-//             amountDue: reservationAmount,
-//             paymentStatus: "pending",
-//             status: "pending",
-//             expiresAt,
-//             source: source || customer.source || "direct_website",
-//             termsAccepted: true,
-//             termsAcceptedAt: new Date(),
-//             notes,
-//             vehicleSnapshot,
-//             buyerSnapshot,
-//             attribution
-//         });
-
-//         /* 8. Mark vehicle reserved */
-//         vehicle.status = "reserved";
-//         vehicle.reservedAt = new Date();
-//         vehicle.updatedBy = null;
-//         await vehicle.save();
-
-//         /* 9. Update lead */
-//         if (lead) {
-//             lead.status = "reserved";
-//             lead.updatedBy = null;
-//             await lead.save();
-
-//             await LeadActivity.create({
-//                 lead: lead._id,
-//                 customer: customer._id,
-//                 type: "reservation",
-//                 title: "Vehicle reserved",
-//                 description: `Reservation ${reservation.reservationNumber} created`,
-//                 meta: { reservationId: reservation._id, amount: reservationAmount },
-//             });
-//         }
-
-//         return ok(res, reservation, "Reservation initiated. Please complete payment.", 201);
-//     } catch (err) {
-//         if (err.code === 11000) return fail(res, "Vehicle already reserved", 409);
-//         next(err);
-//     }
-// };
-
-
 const ALLOWED_SOURCES = [
     "google_ads", "facebook_ads", "instagram", "organic",
     "direct_website", "whatsapp", "phone", "walk_in",
     "referral", "manual", "other",
 ];
 
-// export const publicCreateReservation = async (req, res, next) => {
-//     try {
-//         const attribution = extractAttribution(req);
-//         const {
-//             name, phone, email, city,
-//             vehicle: vehicleId,
-//             lead: leadId,
-//             source,
-//             reservationType = "reservation",
-//             termsAccepted,
-//             notes,
-//         } = req.body;
-
-//         // Validation
-//         if (!name || !phone) return fail(res, "Name and phone are required", 400);
-//         if (!vehicleId) return fail(res, "Vehicle is required", 400);
-
-//         const termsOk = termsAccepted === true || termsAccepted === "true";
-//         if (!termsOk) return fail(res, "Terms must be accepted", 400);
-
-//         if (!mongoose.isValidObjectId(vehicleId)) return fail(res, "Invalid vehicle ID", 400);
-
-//         const ALLOWED_SOURCES = [
-//             "google_ads", "facebook_ads", "instagram", "organic",
-//             "direct_website", "whatsapp", "phone", "walk_in",
-//             "referral", "manual", "other",
-//         ];
-//         const safeSource = ALLOWED_SOURCES.includes(source) ? source : "direct_website";
-
-//         /* 1. Vehicle check */
-//         const vehicle = await Vehicle.findById(vehicleId);
-//         if (!vehicle) return fail(res, "Vehicle not found", 404);
-
-//         console.log("Vehicle Status in DB:", vehicle.status); // 👈 Debugging ke liye
-
-//         // ✅ FIX: Capitalized "Available" check aur sahi condition
-//         if (vehicle.status !== "Available") {
-//             return fail(res, `Vehicle is currently ${vehicle.status} and cannot be reserved`, 409);
-//         }
-
-//         const active = await Reservation.findOne({ vehicle: vehicle._id, status: "Active" });
-//         if (active) return fail(res, "Vehicle already reserved", 409);
-
-//         const customer = await Customer.findOneAndUpdate(
-//             { phone },
-//             {
-//                 $setOnInsert: {
-//                     name, phone, email, city,
-//                     source: safeSource,
-//                     ipAddress: req.ip || req.headers["x-forwarded-for"] || null,
-//                 },
-//             },
-//             { new: true, upsert: true, setDefaultsOnInsert: true }
-//         );
-
-//         /* 4. Lead linkage (verify ownership) */
-//         let lead = null;
-//         if (leadId && mongoose.isValidObjectId(leadId)) {
-//             lead = await Lead.findOne({ _id: leadId, customer: customer._id });
-//         }
-//         if (!lead) {
-//             lead = await Lead.findOne({
-//                 customer: customer._id,
-//                 vehicle: vehicle._id,
-//                 status: { $nin: ["won", "lost"] },
-//             }).sort("-createdAt");
-//         }
-
-//         const campaignId = lead?.campaign || null;
-
-//         /* 5. Calculate Reservation Amount (NEW RULE) */
-//         // Uptil 25 Lakhs -> 25k, Above 25 Lakhs -> 10%
-//         const vehiclePrice = Number(vehicle.askingPrice) || 0;
-//         let reservationAmount = 25000; // Default for <= 25L
-
-//         if (vehiclePrice > 2500000) {
-//             reservationAmount = vehiclePrice * 0.10; // 10% for > 25L
-//         }
-
-//         /* 6. Atomic vehicle claim */
-//         // ✅ FIX: Yahan bhi "Available" (capital A) check karein
-//         const claimed = await Vehicle.findOneAndUpdate(
-//             { _id: vehicle._id, status: "Available" },
-//             { $set: { status: "Reserved", reservedAt: new Date() } },
-//             { new: true }
-//         );
-//         if (!claimed) return fail(res, "Vehicle was just reserved by someone else", 409);
-
-//         /* 7. Create reservation (roll back vehicle on failure) */
-//         let reservation;
-//         try {
-//             const { vehicleSnapshot, buyerSnapshot } = buildSnapshots(vehicle, customer);
-//             const holdHours = Number(process.env.RESERVATION_HOLD_HOURS) || 72;
-//             const expiresAt = new Date(Date.now() + holdHours * 3600 * 1000);
-
-//             reservation = await Reservation.create({
-//                 reservationNumber: await generateReservationNumber(),
-//                 customer: customer._id,
-//                 vehicle: vehicle._id,
-//                 lead: lead?._id || null,
-//                 campaign: campaignId,
-//                 reservationType,
-//                 reservationAmount: reservationAmount,
-//                 amountPaid: 0,
-//                 amountDue: reservationAmount,
-//                 paymentStatus: "pending",
-//                 status: "Active",
-//                 expiresAt,
-//                 source: safeSource,
-//                 termsAccepted: true,
-//                 termsAcceptedAt: new Date(),
-//                 notes,
-//                 vehicleSnapshot,
-//                 buyerSnapshot,
-//                 attribution,
-//             });
-//         } catch (createErr) {
-//             // Rollback vehicle if reservation creation fails
-//             // ✅ FIX: Rollback me bhi "Available" capital A
-//             await Vehicle.updateOne(
-//                 { _id: vehicle._id, status: "Reserved" },
-//                 { $set: { status: "Available", reservedAt: null } }
-//             );
-//             throw createErr;
-//         }
-
-//         /* 8. Update lead */
-//         if (lead) {
-//             lead.status = "reserved";
-//             await lead.save();
-//             await LeadActivity.create({
-//                 lead: lead._id,
-//                 customer: customer._id,
-//                 type: "reservation",
-//                 title: "Vehicle reserved",
-//                 description: `Reservation ${reservation.reservationNumber} created`,
-//                 meta: { reservationId: reservation._id, amount: reservationAmount },
-//             }).catch((e) => console.error("LeadActivity failed", e));
-//         }
-
-//         return ok(res, reservation, "Reservation initiated. Please complete payment.", 201);
-//     } catch (err) {
-//         if (err.code === 11000) {
-//             if (err.keyPattern?.reservationNumber)
-//                 return fail(res, "Please retry — temporary conflict", 409);
-//             return fail(res, "Vehicle already reserved", 409);
-//         }
-//         next(err);
-//     }
-// };
-
-
-// export const publicCreateReservation = async (req, res, next) => {
-//     try {
-//         const attribution = extractAttribution(req);
-//         const {
-//             name, phone, email, city,
-//             vehicle: vehicleId,
-//             lead: leadId,
-//             source,
-//             reservationType = "reservation",
-//             termsAccepted,
-//             notes,
-//         } = req.body;
-
-//         // Validation
-//         if (!name || !phone) return fail(res, "Name and phone are required", 400);
-//         if (!vehicleId) return fail(res, "Vehicle is required", 400);
-
-//         const termsOk = termsAccepted === true || termsAccepted === "true";
-//         if (!termsOk) return fail(res, "Terms must be accepted", 400);
-
-//         if (!mongoose.isValidObjectId(vehicleId)) return fail(res, "Invalid vehicle ID", 400);
-
-//         const ALLOWED_SOURCES = [
-//             "google_ads", "facebook_ads", "instagram", "organic",
-//             "direct_website", "whatsapp", "phone", "walk_in",
-//             "referral", "manual", "other",
-//         ];
-//         const safeSource = ALLOWED_SOURCES.includes(source) ? source : "direct_website";
-
-//         /* 1. Vehicle check */
-//         const vehicle = await Vehicle.findById(vehicleId);
-//         if (!vehicle) return fail(res, "Vehicle not found", 404);
-
-//         // ✅ FIX: Capitalized "Available" check
-//         if (vehicle.status !== "Available") {
-//             return fail(res, `Vehicle is currently ${vehicle.status} and cannot be reserved`, 409);
-//         }
-
-//         /* 2. Handle stale Active reservations */
-//         // Agar gaadi Available hai, toh iska matlab purana reservation cancel ho chuka hona chahiye.
-//         // Lekin agar database me kisi galti se purana reservation "Active" pada hai, toh hum use auto-cancel kar denge.
-//         const activeReservations = await Reservation.find({ vehicle: vehicle._id, status: "Active" });
-        
-//         if (activeReservations.length > 0) {
-//             // Purane active reservations ko cancel kar do
-//             await Reservation.updateMany(
-//                 { vehicle: vehicle._id, status: "Active" },
-//                 { 
-//                     $set: { 
-//                         status: "Cancelled", 
-//                         cancelledAt: new Date(),
-//                         cancellationReason: "Auto-cancelled: Vehicle marked available for new booking",
-//                         cancelledBy: "system"
-//                     } 
-//                 }
-//             );
-//         }
-
-//         const customer = await Customer.findOneAndUpdate(
-//             { phone },
-//             {
-//                 $setOnInsert: {
-//                     name, phone, email, city,
-//                     source: safeSource,
-//                     ipAddress: req.ip || req.headers["x-forwarded-for"] || null,
-//                 },
-//             },
-//             { new: true, upsert: true, setDefaultsOnInsert: true }
-//         );
-
-//         /* 4. Lead linkage (verify ownership) */
-//         let lead = null;
-//         if (leadId && mongoose.isValidObjectId(leadId)) {
-//             lead = await Lead.findOne({ _id: leadId, customer: customer._id });
-//         }
-//         if (!lead) {
-//             lead = await Lead.findOne({
-//                 customer: customer._id,
-//                 vehicle: vehicle._id,
-//                 status: { $nin: ["won", "lost"] },
-//             }).sort("-createdAt");
-//         }
-
-//         const campaignId = lead?.campaign || null;
-
-//         /* 5. Calculate Reservation Amount (NEW RULE) */
-//         // Uptil 25 Lakhs -> 25k, Above 25 Lakhs -> 10%
-//         const vehiclePrice = Number(vehicle.askingPrice) || 0;
-//         let reservationAmount = 25000; // Default for <= 25L
-
-//         if (vehiclePrice > 2500000) {
-//             reservationAmount = 50000; 
-//         }
-
-//         /* 6. Atomic vehicle claim */
-//         // ✅ FIX: Yahan bhi "Available" (capital A) check karein
-//         const claimed = await Vehicle.findOneAndUpdate(
-//             { _id: vehicle._id, status: "Available" },
-//             { $set: { status: "Reserved", reservedAt: new Date() } },
-//             { new: true }
-//         );
-//         if (!claimed) return fail(res, "Vehicle was just reserved by someone else", 409);
-
-//         /* 7. Create reservation (roll back vehicle on failure) */
-//         let reservation;
-//         try {
-//             const { vehicleSnapshot, buyerSnapshot } = buildSnapshots(vehicle, customer);
-//             const holdHours = Number(process.env.RESERVATION_HOLD_HOURS) || 72;
-//             const expiresAt = new Date(Date.now() + holdHours * 3600 * 1000);
-
-//             reservation = await Reservation.create({
-//                 reservationNumber: await generateReservationNumber(),
-//                 customer: customer._id,
-//                 vehicle: vehicle._id,
-//                 lead: lead?._id || null,
-//                 campaign: campaignId,
-//                 reservationType,
-//                 reservationAmount: reservationAmount,
-//                 amountPaid: 0,
-//                 amountDue: reservationAmount,
-//                 paymentStatus: "pending",
-//                 status: "Active",
-//                 expiresAt,
-//                 source: safeSource,
-//                 termsAccepted: true,
-//                 termsAcceptedAt: new Date(),
-//                 notes,
-//                 vehicleSnapshot,
-//                 buyerSnapshot,
-//                 attribution,
-//             });
-//         } catch (createErr) {
-//             // Rollback vehicle if reservation creation fails
-//             // ✅ FIX: Rollback me bhi "Available" capital A
-//             await Vehicle.updateOne(
-//                 { _id: vehicle._id, status: "Reserved" },
-//                 { $set: { status: "Available", reservedAt: null } }
-//             );
-//             throw createErr;
-//         }
-
-//         /* 8. Update lead */
-//         if (lead) {
-//             lead.status = "reserved";
-//             await lead.save();
-//             await LeadActivity.create({
-//                 lead: lead._id,
-//                 customer: customer._id,
-//                 type: "reservation",
-//                 title: "Vehicle reserved",
-//                 description: `Reservation ${reservation.reservationNumber} created`,
-//                 meta: { reservationId: reservation._id, amount: reservationAmount },
-//             }).catch((e) => console.error("LeadActivity failed", e));
-//         }
-
-//         return ok(res, reservation, "Reservation initiated. Please complete payment.", 201);
-//     } catch (err) {
-//         if (err.code === 11000) {
-//             if (err.keyPattern?.reservationNumber)
-//                 return fail(res, "Please retry — temporary conflict", 409);
-//             return fail(res, "Vehicle already reserved", 409);
-//         }
-//         next(err);
-//     }
-// };
-
-
+/* ============================================================
+   PUBLIC — Initiate reservation
+   Vehicle stays "Available" until payment succeeds.
+   ============================================================ */
 export const publicCreateReservation = async (req, res, next) => {
     try {
         const attribution = extractAttribution(req);
@@ -644,58 +134,68 @@ export const publicCreateReservation = async (req, res, next) => {
         if (!termsOk) return fail(res, "Terms must be accepted", 400);
         if (!mongoose.isValidObjectId(vehicleId)) return fail(res, "Invalid vehicle ID", 400);
 
-        const ALLOWED_SOURCES = ["google_ads", "facebook_ads", "instagram", "organic", "direct_website", "whatsapp", "phone", "walk_in", "referral", "manual", "other"];
         const safeSource = ALLOWED_SOURCES.includes(source) ? source : "direct_website";
 
-        /* 1. Vehicle check (Sirf check karo, status change mat karo) */
+        /* 1. Vehicle check — must be Available */
         const vehicle = await Vehicle.findById(vehicleId);
         if (!vehicle) return fail(res, "Vehicle not found", 404);
 
-        // ✅ Senior ki baat: Gaadi Available honi chahiye book karne ke liye
         if (vehicle.status !== "Available") {
             return fail(res, `Vehicle is currently ${vehicle.status} and cannot be reserved`, 409);
         }
 
-        /* 2. Check if vehicle is already booked by someone else (payment pending) */
-        // Agar kisi ne payment ke liye book kar rakha hai, toh dusre ko rokna padega
-        const existingPaymentPending = await Reservation.findOne({ 
-            vehicle: vehicle._id, 
+        /* 2. Block if another customer is already mid-payment on this vehicle */
+        const existingPaymentPending = await Reservation.findOne({
+            vehicle: vehicle._id,
             paymentStatus: "pending",
-            status: { $in: ["Active", "Pending"] },
-            expiresAt: { $gt: new Date() } 
+            status: "Active",                       // ✅ FIX: only "Active" (schema enum)
+            expiresAt: { $gt: new Date() },
         });
-        
         if (existingPaymentPending) {
             return fail(res, "Vehicle is currently in payment process by another customer", 409);
         }
 
-        const customer = await Customer.findOneAndUpdate(
-            { phone },
-            {
-                $setOnInsert: { name, phone, email, city, source: safeSource, ipAddress: req.ip || req.headers["x-forwarded-for"] || null },
-            },
-            { new: true, upsert: true, setDefaultsOnInsert: true }
-        );
+        /* 3. Customer — name-aware lookup (senior's rule)
+              Same phone + different name = NEW customer, don't reuse old record */
+        let customer = await Customer.findOne({
+            phone,
+            name: new RegExp(`^${name.trim()}$`, "i"),
+        });
+        if (!customer) {
+            customer = await Customer.create({
+                name,
+                phone,
+                email,
+                city,
+                source: safeSource,
+                ipAddress: req.ip || req.headers["x-forwarded-for"] || null,
+            });
+        }
 
+        /* 4. Lead linkage */
         let lead = null;
         if (leadId && mongoose.isValidObjectId(leadId)) {
             lead = await Lead.findOne({ _id: leadId, customer: customer._id });
         }
         if (!lead) {
-            lead = await Lead.findOne({ customer: customer._id, vehicle: vehicle._id, status: { $nin: ["won", "lost"] } }).sort("-createdAt");
+            lead = await Lead.findOne({
+                customer: customer._id,
+                vehicle: vehicle._id,
+                status: { $nin: ["Won", "Lost"] },      // ✅ FIX: capital W/L
+            }).sort("-createdAt");
         }
         const campaignId = lead?.campaign || null;
 
-        /* 3. Calculate Reservation Amount */
+        /* 5. Reservation amount */
         const vehiclePrice = Number(vehicle.askingPrice) || 0;
         let reservationAmount = 25000;
         if (vehiclePrice > 2500000) {
             reservationAmount = vehiclePrice * 0.10;
         }
 
-        /* 4. Create reservation (Without claiming vehicle) */
+        /* 6. Create reservation — vehicle stays "Available" */
         const { vehicleSnapshot, buyerSnapshot } = buildSnapshots(vehicle, customer);
-        const holdHours = Number(process.env.RESERVATION_HOLD_HOURS) || 72; // Payment ke liye 72 ghante ka time
+        const holdHours = Number(process.env.RESERVATION_HOLD_HOURS) || 72;
         const expiresAt = new Date(Date.now() + holdHours * 3600 * 1000);
 
         const reservation = await Reservation.create({
@@ -708,8 +208,8 @@ export const publicCreateReservation = async (req, res, next) => {
             reservationAmount: reservationAmount,
             amountPaid: 0,
             amountDue: reservationAmount,
-            paymentStatus: "pending", // ✅ Pending
-            status: "Active",         // ✅ Active (hold active hai)
+            paymentStatus: "pending",
+            status: "Active",
             expiresAt,
             source: safeSource,
             termsAccepted: true,
@@ -720,18 +220,28 @@ export const publicCreateReservation = async (req, res, next) => {
             attribution,
         });
 
+        /* 7. Lead pipeline → "Reserved" (forward-only) */
         if (lead) {
-            lead.status = "reserved";
-            await lead.save();
+            // ✅ FIX P6/P7: forward-only guard + correct enum
+            const STAGE_RANK = { New: 0, Contacted: 1, Qualified: 2, "Test Drive": 3, "Visit Scheduled": 4, Negotiation: 5, Reserved: 6, Booked: 7, Won: 8 };
+            const currentRank = STAGE_RANK[lead.status] ?? -1;
+            if (STAGE_RANK["Reserved"] > currentRank) {
+                lead.status = "Reserved";
+                lead.stageHistory = lead.stageHistory || [];
+                lead.stageHistory.push({ stage: "Reserved", changedBy: null, note: "Public reservation (pending payment)" });
+                await lead.save();
+            }
+
             await LeadActivity.create({
-                lead: lead._id, customer: customer._id, type: "reservation",
+                lead: lead._id,
+                customer: customer._id,
+                type: "reservation",
                 title: "Vehicle reserved (Pending Payment)",
                 description: `Reservation ${reservation.reservationNumber} created`,
                 meta: { reservationId: reservation._id, amount: reservationAmount },
             }).catch((e) => console.error("LeadActivity failed", e));
         }
 
-        // Yahan hum Reservation object return kar rahe hain. Vehicle ka status "Available" hi hai.
         return ok(res, reservation, "Reservation initiated. Please complete payment.", 201);
     } catch (err) {
         if (err.code === 11000) {
@@ -749,12 +259,16 @@ export const createReservationManual = async (req, res, next) => {
             reservationDate, transactionReference, cancellationRefund
         } = req.body;
 
-        /* 1. Resolve Customer */
+        /* 1. Resolve Customer — name-aware */
         let customer = null;
         if (customerId && mongoose.isValidObjectId(customerId)) {
             customer = await Customer.findById(customerId);
         } else if (customerName) {
-            customer = await Customer.findOne({ phone: customerPhone || "temp" });
+            // ✅ FIX P5: name-aware lookup
+            customer = await Customer.findOne({
+                phone: customerPhone || "temp",
+                name: new RegExp(`^${customerName.trim()}$`, "i"),
+            });
             if (!customer) {
                 customer = await Customer.create({
                     name: customerName,
@@ -771,50 +285,38 @@ export const createReservationManual = async (req, res, next) => {
         }
 
         /* 3. Calculate Reservation Amount */
-        let finalDepositAmount=25000; // Staff override (if provided)
-
-        // Agar staff ne amount nahi diya, toh auto-calculate karo vehicle price se
+        let finalDepositAmount = 25000;
         if (vehicle) {
             const vehiclePrice = Number(vehicle.price) || 0;
-            finalDepositAmount = 25000; // Default for <= 25L
-
+            finalDepositAmount = 25000;
             if (vehiclePrice > 2500000) {
-                finalDepositAmount = vehiclePrice * 0.10; // 10%
+                finalDepositAmount = vehiclePrice * 0.10;
             }
-        } else if (!finalDepositAmount && !vehicle) {
-            finalDepositAmount = 25000; // Fallback if no vehicle and no amount
         }
 
-        /* 4. Create Reservation */
+        /* 4. Create Reservation — do NOT touch vehicle status */
         const reservation = await Reservation.create({
             reservationNumber: await generateReservationNumber(),
             customer: customer?._id || null,
             customerName: customerName || customer?.name,
             customerPhone: customerPhone || customer?.phone,
-
             vehicle: vehicle?._id || null,
             vehicleName: vehicleName || (vehicle ? `${vehicle.brand} ${vehicle.model}` : null),
-
-            reservationAmount: finalDepositAmount, // ✅ YAHAN UPDATE HUA HAI
+            reservationAmount: finalDepositAmount,
             amountPaid: 0,
             amountDue: finalDepositAmount,
             paymentCheck: "Pending",
+            paymentStatus: "pending",           // ✅ FIX: keep in sync
             status: "Active",
             transactionReference,
             cancellationRefund,
-
             reservationDate: reservationDate ? new Date(reservationDate) : new Date(),
-
             createdBy: req.user._id,
             updatedBy: req.user._id,
         });
 
-        // If vehicle is attached, mark it as reserved
-        if (vehicle) {
-            vehicle.status = "reserved";
-            vehicle.reservedAt = new Date();
-            await vehicle.save();
-        }
+        // ✅ FIX P1: Removed — vehicle should NOT be marked "Reserved" here.
+        // Vehicle is claimed only after successful payment (verifyPayment / webhook).
 
         return ok(res, reservation, "Reservation created successfully", 201);
     } catch (err) {
@@ -822,11 +324,8 @@ export const createReservationManual = async (req, res, next) => {
     }
 };
 
-
-
 /* ============================================================
    CRM — List reservations
-   GET /api/v1/reservations
    ============================================================ */
 export const listReservations = async (req, res, next) => {
     try {
@@ -844,7 +343,6 @@ export const listReservations = async (req, res, next) => {
             filter.assignedTo = assignedTo;
         }
 
-        // ✅ Filters
         if (status) filter.status = status;
         if (paymentCheck) filter.paymentCheck = paymentCheck;
         if (customer) filter.customer = customer;
@@ -862,7 +360,6 @@ export const listReservations = async (req, res, next) => {
             filter.status = "Active";
         }
 
-        // ✅ Search
         if (search) {
             filter.$or = [
                 { reservationNumber: new RegExp(search, "i") },
@@ -872,11 +369,10 @@ export const listReservations = async (req, res, next) => {
             ];
         }
 
-        // ✅ SORTING LOGIC
-        let sortOptions = { createdAt: -1 }; // Default: Most recent
+        let sortOptions = { createdAt: -1 };
         if (sort === "recent") sortOptions = { createdAt: -1 };
-        else if (sort === "deposit_low_high") sortOptions = { depositAmount: 1 };
-        else if (sort === "deposit_high_low") sortOptions = { depositAmount: -1 };
+        else if (sort === "deposit_low_high") sortOptions = { reservationAmount: 1 }; // ✅ FIX: schema has reservationAmount, not depositAmount
+        else if (sort === "deposit_high_low") sortOptions = { reservationAmount: -1 };
 
         const [data, total] = await Promise.all([
             Reservation.find(filter)
@@ -899,7 +395,7 @@ export const listReservations = async (req, res, next) => {
 };
 
 /* ============================================================
-   CRM — Get single reservation
+   CRM — Get single reservation (unchanged)
    ============================================================ */
 export const getReservation = async (req, res, next) => {
     try {
@@ -930,7 +426,7 @@ export const getReservation = async (req, res, next) => {
 };
 
 /* ============================================================
-   CRM — Update reservation (notes, assignedTo, expiresAt)
+   CRM — Update reservation (unchanged)
    ============================================================ */
 export const updateReservation = async (req, res, next) => {
     try {
@@ -961,7 +457,7 @@ export const updateReservation = async (req, res, next) => {
 };
 
 /* ============================================================
-   CRM — Assign to sales exec
+   CRM — Assign to sales exec (unchanged)
    ============================================================ */
 export const assignReservation = async (req, res, next) => {
     try {
@@ -983,18 +479,18 @@ export const assignReservation = async (req, res, next) => {
 
 /* ============================================================
    CRM — Confirm reservation manually
-   PATCH /api/v1/reservations/:id/confirm
    ============================================================ */
 export const confirmReservation = async (req, res, next) => {
     try {
         const reservation = await Reservation.findById(req.params.id);
         if (!reservation) return fail(res, "Reservation not found", 404);
-        if (reservation.status === "confirmed")
+
+        // ✅ FIX P10: capitalized statuses matching schema enum
+        if (reservation.status === "Confirmed")
             return fail(res, "Reservation already confirmed", 400);
-        if (["cancelled", "expired", "refunded", "Completed"].includes(reservation.status))
+        if (["Cancelled", "Expired", "Refunded", "Completed"].includes(reservation.status))
             return fail(res, `Cannot confirm a ${reservation.status} reservation`, 400);
 
-        // ✅ CRITICAL: ensure payment has actually succeeded
         const paidPayment = await Payment.findOne({
             reservation: reservation._id,
             status: "paid",
@@ -1003,12 +499,11 @@ export const confirmReservation = async (req, res, next) => {
             return fail(res, "Cannot confirm — no successful payment found on this reservation", 400);
         }
 
-        // ✅ Optional but recommended: ensure at least the deposit is paid
         if ((reservation.amountPaid || 0) <= 0) {
             return fail(res, "Cannot confirm — no amount paid yet", 400);
         }
 
-        reservation.status = "confirmed";
+        reservation.status = "Confirmed";       // ✅ FIX: capital C
         reservation.confirmedAt = new Date();
         reservation.paymentStatus =
             reservation.amountPaid >= reservation.reservationAmount ? "paid" : "partial";
@@ -1025,24 +520,18 @@ export const confirmReservation = async (req, res, next) => {
 };
 
 /* ============================================================
-   CRM — Extend reservation validity (default 3 more days)
-   PATCH /api/v1/reservations/:id/extend
-   Body: { expiresAt? }  // optional — if not given, extends by 3 days
+   CRM — Extend reservation (unchanged)
    ============================================================ */
 export const extendReservation = async (req, res, next) => {
     try {
         const reservation = await Reservation.findById(req.params.id);
         if (!reservation) return fail(res, "Reservation not found", 404);
 
-        // ✅ FIX: Aapke schema ke according valid Capitalized statuses
-        // Sirf Active aur Confirmed reservations ko extend kiya ja sakta hai
         const extendableStatuses = ["Active", "Confirmed"];
-
         if (!extendableStatuses.includes(reservation.status)) {
             return fail(res, `Cannot extend a reservation with status: ${reservation.status}`, 400);
         }
 
-        // Check if already paid (Agar payment ho chuki hai, toh extend ka koi matlab nahi)
         if (reservation.paymentStatus === "paid") {
             return fail(res, "Reservation is already fully paid and cannot be extended", 400);
         }
@@ -1053,13 +542,10 @@ export const extendReservation = async (req, res, next) => {
             if (isNaN(newExpiry.getTime())) {
                 return fail(res, "Invalid expiresAt date format", 400);
             }
-            // Optional: Ensure new expiry is in the future
             if (newExpiry <= new Date()) {
                 return fail(res, "New expiry date must be in the future", 400);
             }
         } else {
-            // Default: extend by RESERVATION_HOLD_HOURS from NOW (or from existing expiry?)
-            // Usually, extension means adding time to the CURRENT time, not the old expiry.
             const holdHours = Number(process.env.RESERVATION_HOLD_HOURS) || 72;
             newExpiry = new Date(Date.now() + holdHours * 60 * 60 * 1000);
         }
@@ -1070,7 +556,6 @@ export const extendReservation = async (req, res, next) => {
         reservation.updatedBy = req.user._id;
 
         await reservation.save();
-
         return ok(res, reservation, `Reservation extended successfully to ${newExpiry.toISOString()}`);
     } catch (err) {
         next(err);
@@ -1079,7 +564,6 @@ export const extendReservation = async (req, res, next) => {
 
 /* ============================================================
    CRM — Cancel reservation
-   PATCH /api/v1/reservations/:id/cancel
    ============================================================ */
 export const cancelReservation = async (req, res, next) => {
     try {
@@ -1087,7 +571,9 @@ export const cancelReservation = async (req, res, next) => {
 
         const reservation = await Reservation.findById(req.params.id);
         if (!reservation) return fail(res, "Reservation not found", 404);
-        if (["completed", "cancelled", "refunded"].includes(reservation.status))
+
+        // ✅ FIX P9: capitalized statuses
+        if (["Completed", "Cancelled", "Refunded"].includes(reservation.status))
             return fail(res, `Cannot cancel a ${reservation.status} reservation`, 400);
 
         reservation.status = "Cancelled";
@@ -1098,18 +584,20 @@ export const cancelReservation = async (req, res, next) => {
         reservation.updatedBy = req.user._id;
         await reservation.save();
 
-        /* Free up the vehicle */
-        await Vehicle.findByIdAndUpdate(reservation.vehicle, {
-            status: "available",
-            reservedAt: null,
-            updatedBy: req.user._id,
-        });
+        /* Free up the vehicle — only if it was actually claimed */
+        if (reservation.paymentStatus === "paid" || reservation.paymentStatus === "partial") {
+            await Vehicle.findByIdAndUpdate(reservation.vehicle, {
+                status: "Available",                // ✅ FIX: capital A
+                reservedAt: null,
+                updatedBy: req.user._id,
+            });
+        }
 
-        /* Roll lead back to previous stage */
+        /* Roll lead back */
         if (reservation.lead) {
             const lead = await Lead.findById(reservation.lead);
-            if (lead && lead.status === "reserved") {
-                lead.status = "negotiation";
+            if (lead && lead.status === "Reserved") {   // ✅ FIX: capital R
+                lead.status = "Negotiation";            // ✅ FIX: capital N
                 lead.updatedBy = req.user._id;
                 await lead.save();
             }
@@ -1131,8 +619,7 @@ export const cancelReservation = async (req, res, next) => {
 };
 
 /* ============================================================
-   CRM — Mark as completed (e.g., converted to sale or closed)
-   PATCH /api/v1/reservations/:id/complete
+   CRM — Mark as completed (unchanged)
    ============================================================ */
 export const completeReservation = async (req, res, next) => {
     try {
@@ -1161,10 +648,10 @@ export const deleteReservation = async (req, res, next) => {
         const reservation = await Reservation.findById(req.params.id);
         if (!reservation) return fail(res, "Reservation not found", 404);
 
-        // Free vehicle if active
-        if (["initiated", "pending", "confirmed"].includes(reservation.status)) {
+        // ✅ FIX: capitalized statuses + only free vehicle if it was claimed
+        if (["Active", "Confirmed"].includes(reservation.status)) {
             await Vehicle.findByIdAndUpdate(reservation.vehicle, {
-                status: "available",
+                status: "Available",                // ✅ FIX: capital A
                 reservedAt: null,
                 updatedBy: req.user._id,
             });
@@ -1182,7 +669,7 @@ export const deleteReservation = async (req, res, next) => {
 };
 
 /* ============================================================
-   CRM — Dashboard stats (BRD 9.1)
+   CRM — Dashboard stats
    ============================================================ */
 export const getReservationStats = async (req, res, next) => {
     try {
@@ -1192,14 +679,12 @@ export const getReservationStats = async (req, res, next) => {
         const [total, active, confirmed, cancelled, completed, expired, byStatus, byPayment] =
             await Promise.all([
                 Reservation.countDocuments(scopeFilter),
-                Reservation.countDocuments({
-                    ...scopeFilter,
-                    status: { $in: ["initiated", "pending"] },
-                }),
-                Reservation.countDocuments({ ...scopeFilter, status: "confirmed" }),
-                Reservation.countDocuments({ ...scopeFilter, status: "cancelled" }),
-                Reservation.countDocuments({ ...scopeFilter, status: "completed" }),
-                Reservation.countDocuments({ ...scopeFilter, status: "expired" }),
+                // ✅ FIX: "Active" is the schema enum for pending holds
+                Reservation.countDocuments({ ...scopeFilter, status: "Active" }),
+                Reservation.countDocuments({ ...scopeFilter, status: "Confirmed" }),
+                Reservation.countDocuments({ ...scopeFilter, status: "Cancelled" }),
+                Reservation.countDocuments({ ...scopeFilter, status: "Completed" }),
+                Reservation.countDocuments({ ...scopeFilter, status: "Expired" }),
                 Reservation.aggregate([
                     { $match: scopeFilter },
                     { $group: { _id: "$status", count: { $sum: 1 } } },
@@ -1230,8 +715,6 @@ import { detectRefundScenario, shouldAutoApprove, buildRefundMessage }
 
 /* ============================================================
    PUBLIC — Customer requests refund
-   POST /api/v1/reservations/:id/refund/request
-   Body: { inspectionDone, reason, customerEmail?, customerMessage? }
    ============================================================ */
 export const requestRefund = async (req, res, next) => {
     try {
@@ -1240,31 +723,24 @@ export const requestRefund = async (req, res, next) => {
         const reservation = await Reservation.findById(req.params.id);
         if (!reservation) return fail(res, "Reservation not found", 404);
 
-        // Only paid reservations can be refunded
         if (reservation.paymentStatus === "pending") {
             return fail(res, "No payment received on this reservation", 400);
         }
-        if (["cancelled", "expired", "refunded"].includes(reservation.status)) {
+        // ✅ FIX: capitalized statuses
+        if (["Cancelled", "Expired", "Refunded"].includes(reservation.status)) {
             return fail(res, `Cannot request refund for a ${reservation.status} reservation`, 400);
         }
         if (reservation.refundRequest) {
             return fail(res, "A refund request already exists for this reservation", 409);
         }
 
-        // Determine scenario
         const scenario = detectRefundScenario({ inspectionDone });
         const autoApprove = shouldAutoApprove(scenario);
 
-        // For scenario B, email is mandatory
         if (scenario === "no_visit_email" && !customerEmail && !customerMessage) {
-            return fail(
-                res,
-                "Please provide an email or message explaining your refund request",
-                400
-            );
+            return fail(res, "Please provide an email or message explaining your refund request", 400);
         }
 
-        // Refund amount = whatever was paid
         const refundAmount = reservation.amountPaid || 0;
 
         reservation.refundRequest = {
@@ -1279,15 +755,10 @@ export const requestRefund = async (req, res, next) => {
             refundMethod: "original_payment",
         };
 
-        // If auto-approved (Scenario A), we still don't process immediately —
-        // it goes to CRM where staff clicks "Process refund" (which calls Razorpay).
-        // This matches client's "full refund" promise while keeping ops control.
-
         await reservation.save();
 
-        // Notify CRM admin team
         await sendNotification({
-            recipientType: "staff",        // use "admin" if you have that enum
+            recipientType: "staff",
             to: process.env.ADMIN_EMAIL || "admin@shivayeluxurycars.com",
             channel: "email",
             type: "custom",
@@ -1316,10 +787,9 @@ export const requestRefund = async (req, res, next) => {
         next(err);
     }
 };
+
 /* ============================================================
-   CRM — Review refund request (Scenario B only)
-   PATCH /api/v1/reservations/:id/refund/review
-   Body: { action: "approve" | "reject", reviewNotes? }
+   CRM — Review refund request
    ============================================================ */
 export const reviewRefundRequest = async (req, res, next) => {
     try {
@@ -1337,7 +807,6 @@ export const reviewRefundRequest = async (req, res, next) => {
 
         const rf = reservation.refundRequest;
 
-        // Scenario A auto-approved — no review needed
         if (rf.scenario === "physical_inspection") {
             return fail(res, "This refund was auto-approved. Use /refund/process instead.", 400);
         }
@@ -1353,7 +822,6 @@ export const reviewRefundRequest = async (req, res, next) => {
 
         await reservation.save();
 
-        // If rejected → notify customer
         if (action === "reject") {
             const customer = await Customer.findById(reservation.customer);
             if (customer) {
@@ -1370,7 +838,6 @@ export const reviewRefundRequest = async (req, res, next) => {
             }
         }
 
-        // If approved → notify customer that refund will be processed shortly
         if (action === "approve") {
             const customer = await Customer.findById(reservation.customer);
             if (customer) {
@@ -1393,7 +860,7 @@ export const reviewRefundRequest = async (req, res, next) => {
     }
 };
 
-import Razorpay from "razorpay";  // top of file
+import Razorpay from "razorpay";
 
 let razorpayClient = null;
 const getRazorpay = () => {
@@ -1408,8 +875,6 @@ const getRazorpay = () => {
 
 /* ============================================================
    CRM — Process refund via Razorpay
-   PATCH /api/v1/reservations/:id/refund/process
-   Body: { refundMethod?: "original_payment" | "bank_transfer" | "manual" }
    ============================================================ */
 export const processRefundRequest = async (req, res, next) => {
     try {
@@ -1421,12 +886,10 @@ export const processRefundRequest = async (req, res, next) => {
 
         const rf = reservation.refundRequest;
 
-        // Can only process auto_approved (Scenario A) or approved (Scenario B)
         if (!["auto_approved", "approved"].includes(rf.status)) {
             return fail(res, `Cannot process refund with status: ${rf.status}`, 400);
         }
 
-        // Get the original payment
         const payment = await Payment.findOne({
             reservation: reservation._id,
             status: "paid",
@@ -1437,12 +900,11 @@ export const processRefundRequest = async (req, res, next) => {
             return fail(res, "Payment has no Razorpay payment ID", 400);
         }
 
-        // Call Razorpay refund
         const rzp = getRazorpay();
         let rzRefund;
         try {
             rzRefund = await rzp.payments.refund(payment.gatewayPaymentId, {
-                amount: Math.round(rf.refundAmount * 100),   // paise
+                amount: Math.round(rf.refundAmount * 100),
                 notes: {
                     reservationId: String(reservation._id),
                     reservationNumber: reservation.reservationNumber,
@@ -1455,21 +917,18 @@ export const processRefundRequest = async (req, res, next) => {
             return fail(res, `Payment gateway refund failed: ${rzErr.message}`, 400);
         }
 
-        // Update refund request
         rf.status = "processed";
         rf.refundId = rzRefund.id;
         rf.refundMethod = req.body.refundMethod || "original_payment";
         rf.processedAt = new Date();
         rf.processedBy = req.user._id;
 
-        // Update reservation
-        reservation.status = "refunded";
+        reservation.status = "Refunded";        // ✅ FIX: capital R
         reservation.paymentStatus = "refunded";
         reservation.refundedAt = new Date();
         reservation.updatedBy = req.user._id;
         await reservation.save();
 
-        // Update Payment record
         payment.refund = {
             refundId: rzRefund.id,
             amount: rf.refundAmount,
@@ -1485,14 +944,12 @@ export const processRefundRequest = async (req, res, next) => {
         }
         await payment.save();
 
-        // Free up the vehicle
         await Vehicle.findByIdAndUpdate(reservation.vehicle, {
-            status: "available",
+            status: "Available",                // ✅ FIX: capital A
             reservedAt: null,
             updatedBy: req.user._id,
         });
 
-        // Notify customer
         const customer = await Customer.findById(reservation.customer);
         if (customer) {
             await sendNotification({
@@ -1527,8 +984,7 @@ export const processRefundRequest = async (req, res, next) => {
 };
 
 /* ============================================================
-   Get refund request details
-   GET /api/v1/reservations/:id/refund
+   Get refund request details (unchanged)
    ============================================================ */
 export const getRefundRequest = async (req, res, next) => {
     try {

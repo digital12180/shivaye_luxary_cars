@@ -51,7 +51,6 @@ const generateReceiptNumber = async () => {
 const handleSuccessfulPayment = async (payment, { session, reservation } = {}) => {
   if (!payment.reservation) return;
 
-  // Agar session pass nahi hua hai, toh naya reservation fetch karo
   if (!reservation) {
     reservation = await Reservation.findById(payment.reservation).session(session || null);
     if (!reservation) throw new Error("Reservation not found for this payment");
@@ -61,15 +60,13 @@ const handleSuccessfulPayment = async (payment, { session, reservation } = {}) =
   reservation.amountPaid = (reservation.amountPaid || 0) + payment.amount;
   reservation.amountDue = Math.max(0, reservation.reservationAmount - reservation.amountPaid);
   reservation.paymentStatus = reservation.amountDue === 0 ? "paid" : "partial";
-
-  // ✅ FIX: Capitalized "Confirmed" use karein (schema ke according)
-  reservation.status = "Confirmed";
+  reservation.status = "Completed"; // or "Confirmed" based on your final decision
   reservation.confirmedAt = new Date();
   reservation.payment = payment._id;
 
   await reservation.save({ session });
 
-  // 2. Vehicle status update (✅ FIX: Capitalized "Reserved")
+  // 2. Vehicle status update
   await Vehicle.findByIdAndUpdate(
     reservation.vehicle,
     { status: "Reserved" },
@@ -89,12 +86,12 @@ const handleSuccessfulPayment = async (payment, { session, reservation } = {}) =
 
     await Lead.findByIdAndUpdate(
       reservation.lead,
-      { status: "booked" },
+      { status: "Booked" }, // ✅ FIX: Capitalized "Booked"
       { session }
     );
   }
 
-  // 4. Notification (Isko try-catch me rakhein taaki notification fail hone se DB transaction na ruke)
+  // 4. Notification
   try {
     const customer = await Customer.findById(payment.customer).session(session);
     if (customer) {
@@ -106,15 +103,10 @@ const handleSuccessfulPayment = async (payment, { session, reservation } = {}) =
         type: "payment_success",
         title: "Payment received",
         body: `Thank you ${customer.name}. We have received ₹${payment.amount} for reservation ${reservation.reservationNumber}.`,
-        relatedTo: {
-          payment: payment._id,
-          reservation: reservation._id,
-          vehicle: reservation.vehicle,
-        },
+        relatedTo: { payment: payment._id, reservation: reservation._id, vehicle: reservation.vehicle },
       });
     }
   } catch (err) {
-    // Notification fail hone par transaction abort NAHI hona chahiye
     console.error("Notification failed (but payment successful):", err.message);
   }
 };
@@ -416,8 +408,8 @@ export const verifyPayment = async (req, res, next) => {
 
     if (payment.gatewayOrderId !== razorpay_order_id) throw new Error("Order ID mismatch");
 
-    // ... (Razorpay Signature verification logic same rahega) ...
-    const expected = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET).update(`${razorpay_order_id}|${razorpay_payment_id}`).digest("hex");
+    const expected = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`).digest("hex");
     if (expected !== razorpay_signature) throw new Error("Invalid payment signature");
 
     const rzp = getRazorpay();
@@ -427,53 +419,91 @@ export const verifyPayment = async (req, res, next) => {
       throw new Error("Amount mismatch");
     }
 
-    // ✅ STEP 1: Check if Vehicle is still Available
+    /* STEP 1: Load reservation + vehicle */
     const reservation = await Reservation.findById(payment.reservation).session(session);
     if (!reservation) throw new Error("Reservation not found for payment");
 
     const vehicle = await Vehicle.findById(reservation.vehicle).session(session);
     if (!vehicle) throw new Error("Vehicle not found");
 
-    // AGAR GAADI KISI AUR NE BOOK KAR LI HAI (Race Condition)
-    if (vehicle.status !== "Available") {
-      // Payment kat chuka hai, par gaadi nahi hai. Isko handle karna padega (Refund initiated)
-      throw new Error("Vehicle was just reserved by someone else. Please contact support for refund.");
+    if (vehicle.status === "Available") {
+      const claimed = await Vehicle.findOneAndUpdate(
+        { _id: vehicle._id, status: "Available" },
+        { $set: { status: "Reserved", reservedAt: new Date() } },
+        { new: true, session }
+      );
+      if (!claimed) {
+        throw new Error("Vehicle was just reserved by someone else. Please contact support for refund.");
+      }
+    } else if (vehicle.status === "Reserved") {
+      // Check if it's reserved by this specific reservation
+      const activeRes = await Reservation.findOne({ vehicle: vehicle._id, status: "Active" }).session(session);
+      if (!activeRes || activeRes._id.toString() !== reservation._id.toString()) {
+        throw new Error("Vehicle was just reserved by someone else. Please contact support for refund.");
+      }
+    } else {
+      throw new Error(`Vehicle is currently ${vehicle.status} and cannot be reserved.`);
     }
 
-    // ✅ STEP 2: Atomically Claim Vehicle
-    const claimed = await Vehicle.findOneAndUpdate(
-      { _id: vehicle._id, status: "Available" },
-      { $set: { status: "Reserved", reservedAt: new Date() } },
-      { new: true, session }
-    );
-
-    if (!claimed) {
-      throw new Error("Vehicle was just reserved by someone else. Please contact support for refund.");
-    }
-
-    // ✅ STEP 3: Update Payment
+    /* STEP 3: Update Payment */
     payment.gatewayPaymentId = razorpay_payment_id;
+    payment.gatewaySignature = razorpay_signature;
     payment.status = "paid";
     payment.paidAt = new Date();
     payment.signatureVerified = true;
+    payment.paymentMethod = rzPayment.method || null;
+    payment.methodDetails = {
+      type: rzPayment.method,
+      bank: rzPayment.bank || null,
+      wallet: rzPayment.wallet || null,
+      cardLast4: rzPayment.card?.last4 || null,
+      vpa: rzPayment.vpa || null,
+      network: rzPayment.card?.network || null,
+    };
+    payment.gatewayFee = (rzPayment.fee || 0) / 100;
     payment.invoiceNumber = await generateReceiptNumber();
+    payment.providerResponse = rzPayment;
     await payment.save({ session });
 
-    // ✅ STEP 4: Update Reservation
-    // (Yeh handleSuccessfulPayment function ke andar bhi ho sakta hai, par yahan direct kar rahe hain for clarity)
-    reservation.amountPaid = payment.amount;
-    reservation.amountDue = Math.max(0, reservation.reservationAmount - payment.amount);
+    /* STEP 4: Update Reservation */
+    reservation.amountPaid = (reservation.amountPaid || 0) + payment.amount;
+    reservation.amountDue = Math.max(0, reservation.reservationAmount - reservation.amountPaid);
     reservation.paymentStatus = "paid";
-    reservation.status = "Confirmed";
+    reservation.status = "Completed"; // Capital C
     reservation.confirmedAt = new Date();
+    reservation.payment = payment._id;
     await reservation.save({ session });
+
+    /* STEP 5: Update Lead pipeline */
+    if (reservation.lead) {
+      await Lead.findByIdAndUpdate(
+        reservation.lead,
+        { status: "Booked" },
+        { session }
+      );
+      await LeadActivity.create([{
+        lead: reservation.lead,
+        customer: reservation.customer,
+        type: "payment",
+        title: "Reservation payment received",
+        description: `Amount: ₹${payment.amount} (${payment.paymentId})`,
+        meta: { paymentId: payment._id, amount: payment.amount },
+      }], { session });
+    }
 
     await session.commitTransaction();
     transactionCommitted = true;
 
     notifyPaymentSuccess(payment, reservation).catch(console.error);
 
-    return ok(res, { status: payment.status, reservationId: reservation._id }, "Payment verified successfully");
+    return ok(res, {
+      paymentId: payment.paymentId,
+      reservationId: reservation._id,
+      amount: payment.amount,
+      status: payment.status,
+      reservationStatus: reservation.status,
+      invoiceNumber: payment.invoiceNumber,
+    }, "Payment verified successfully");
 
   } catch (err) {
     if (!transactionCommitted && session.inTransaction()) {
@@ -485,7 +515,6 @@ export const verifyPayment = async (req, res, next) => {
     await session.endSession();
   }
 };
-
 /* ============================================================
    PUBLIC — Report payment failure (client-side cancel)
    POST /api/v1/payments/public/failed
@@ -508,7 +537,12 @@ export const reportPaymentFailure = async (req, res, next) => {
     payment.failureReason = reason || "Payment failed or cancelled by user";
     await payment.save();
 
-    await handleFailedPayment(payment);
+    // ✅ FIX: Don't let SMS failure crash the API
+    try {
+      await handleFailedPayment(payment);
+    } catch (notifyErr) {
+      console.error("Failed payment notification error:", notifyErr.message);
+    }
 
     return ok(res, { paymentId: payment.paymentId, status: payment.status }, "Payment marked as failed");
   } catch (err) {
@@ -575,7 +609,7 @@ export const razorpayWebhook = async (req, res) => {
         const reservation = await Reservation.findById(payment.reservation).session(session);
         if (!reservation) throw new Error("Reservation not found");
 
-        // ✅ Claim Vehicle ONLY after payment is captured
+        // ✅ Claim vehicle ONLY after payment captured
         const claimed = await Vehicle.findOneAndUpdate(
           { _id: reservation.vehicle, status: "Available" },
           { $set: { status: "Reserved", reservedAt: new Date() } },
@@ -583,22 +617,42 @@ export const razorpayWebhook = async (req, res) => {
         );
 
         if (!claimed) {
-          // Paisa aa gaya par gaadi available nahi hai. (Need refund)
           throw new Error("Vehicle already reserved. Payment needs refund.");
         }
 
         // Update Payment
         payment.status = "paid";
         payment.paidAt = new Date();
-        // ... (baaki payment fields)
+        payment.gatewayPaymentId = payload.id;
+        payment.signatureVerified = true;
+        payment.providerResponse = payload;
         await payment.save({ session });
 
-        // Update Reservation
-        reservation.status = "Confirmed";
+        // ✅ FIX P3: "Completed" + paymentStatus="paid" (matches verifyPayment)
+        reservation.status = "Completed";
         reservation.paymentStatus = "paid";
-        reservation.amountPaid = payment.amount;
-        reservation.amountDue = Math.max(0, reservation.reservationAmount - payment.amount);
+        reservation.amountPaid = (reservation.amountPaid || 0) + payment.amount;
+        reservation.amountDue = Math.max(0, reservation.reservationAmount - reservation.amountPaid);
+        reservation.confirmedAt = new Date();
+        reservation.payment = payment._id;
         await reservation.save({ session });
+
+        // ✅ FIX P11: Update lead → "Booked"
+        if (reservation.lead) {
+          await Lead.findByIdAndUpdate(
+            reservation.lead,
+            { status: "Booked" },
+            { session }
+          );
+          await LeadActivity.create([{
+            lead: reservation.lead,
+            customer: reservation.customer,
+            type: "payment",
+            title: "Reservation payment received",
+            description: `Amount: ₹${payment.amount} (${payment.paymentId})`,
+            meta: { paymentId: payment._id, amount: payment.amount },
+          }], { session });
+        }
       }
     } else if (eventType === "payment.failed") {
       if (payment.status !== "paid") {
@@ -608,12 +662,9 @@ export const razorpayWebhook = async (req, res) => {
         payment.failureCode = payload.error_code || null;
         payment.providerResponse = payload;
         await payment.save({ session });
-
-        // ✅ FIX: Session pass karo agar aapke handleFailedPayment me DB operations hain
         await handleFailedPayment(payment, { session });
       }
     } else if (eventType === "refund.processed") {
-      // Only update if this payment already has a refund object
       if (payment.refund) {
         payment.refund.status = "processed";
         payment.refund.processedAt = new Date();
@@ -763,14 +814,14 @@ export const refundPayment = async (req, res, next) => {
     if (payment.reservation && amount === payment.amount) {
       const reservation = await Reservation.findById(payment.reservation).session(session);
       if (reservation) {
-        reservation.status = "refunded";
+        reservation.status = "Refunded";          // ✅ FIX: capital R (schema enum)
         reservation.paymentStatus = "refunded";
         reservation.refundedAt = new Date();
         reservation.updatedBy = req.user._id;
         await reservation.save({ session });
 
         await Vehicle.findByIdAndUpdate(reservation.vehicle, {
-          status: "available",
+          status: "Available",                    // ✅ FIX: capital A
           reservedAt: null,
           updatedBy: req.user._id,
         }, { session });
@@ -924,46 +975,3 @@ export const getPaymentStats = async (req, res, next) => {
   }
 };
 
-/* ============================================================
-   CRON HELPER — Expire reservations past hold window
-   Called by a cron job (not HTTP)
-   ============================================================ */
-export const expireStaleReservations = async () => {
-  const now = new Date();
-
-  const stale = await Reservation.find({
-    status: { $in: ["initiated", "pending"] },
-    paymentStatus: { $in: ["pending", "partial"] },
-    expiresAt: { $lt: now },
-  }).limit(50);
-
-  let count = 0;
-  for (const res of stale) {
-    res.status = "expired";
-    res.cancelledAt = now;
-    res.cancelledBy = "system";
-    res.cancellationReason = "Hold period expired";
-    res.cancellationCategory = "expired";
-    await res.save();
-
-    await Vehicle.findByIdAndUpdate(res.vehicle, {
-      status: "available",
-      reservedAt: null,
-    });
-
-    if (res.lead) {
-      await Lead.findByIdAndUpdate(res.lead, { status: "negotiation" });
-      await LeadActivity.create({
-        lead: res.lead,
-        customer: res.customer,
-        type: "system",
-        title: "Reservation expired",
-        description: `Hold expired for reservation ${res.reservationNumber}`,
-        meta: { reservationId: res._id },
-      });
-    }
-    count++;
-  }
-
-  return { expired: count };
-};

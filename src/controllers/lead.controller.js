@@ -33,7 +33,12 @@ export const publicCreateLead = async (req, res, next) => {
         if (!vehicle) return fail(res, `Vehicle not found (id: ${vehicleId})`, 404);
 
         // 3. Resolve / create customer
-        let customer = await Customer.findOne({ phone });
+        // 3. Resolve / create customer — name-aware (senior's rule)
+        // ✅ FIX P5: same phone + different name = new customer, don't reuse old
+        let customer = await Customer.findOne({
+            phone,
+            name: new RegExp(`^${name.trim()}$`, "i"),
+        });
         if (!customer) {
             customer = await Customer.create({
                 name, phone, email, city,
@@ -450,15 +455,26 @@ export const updateLead = async (req, res, next) => {
 };
 
 // PATCH /api/v1/leads/:id/status
+// ✅ FIX P6: forward-only pipeline (senior's rule)
+// Once a lead reaches "Reserved", it cannot go back to earlier stages.
+// "Lost" and "Won" are terminal and can be set from any non-terminal stage.
+const STAGE_RANK = {
+    New: 0,
+    Contacted: 1,
+    Qualified: 2,
+    "Test Drive": 3,
+    "Visit Scheduled": 4,
+    Negotiation: 5,
+    Reserved: 6,
+    Booked: 7,
+    Won: 8,
+};
+
 export const updateLeadStatus = async (req, res, next) => {
     try {
         const { status, note, lostReason, lostReasonCategory } = req.body;
 
-        const allowed = [
-            "New", "Contacted", "Qualified", "Test Drive",
-            "Visit Scheduled", "Negotiation", "Reserved", "Booked",
-            "Won", "Lost",
-        ];
+        const allowed = Object.keys(STAGE_RANK).concat(["Lost"]);
         if (!allowed.includes(status))
             return fail(res, "Invalid status", 400);
 
@@ -472,9 +488,23 @@ export const updateLeadStatus = async (req, res, next) => {
             return fail(res, "Not authorized", 403);
         }
 
+        // ✅ Forward-only guard (except Lost / Won)
+        if (status !== "Lost" && status !== "Won") {
+            const currentRank = STAGE_RANK[lead.status] ?? -1;
+            const newRank = STAGE_RANK[status] ?? -1;
+            if (newRank < currentRank) {
+                return fail(
+                    res,
+                    `Cannot move lead backward from "${lead.status}" to "${status}"`,
+                    400
+                );
+            }
+        }
+
         lead.status = status;
         lead.updatedBy = req.user._id;
-        if (note) lead.stageHistory.push({ stage: status, changedBy: req.user._id, note });
+        lead.stageHistory = lead.stageHistory || [];
+        lead.stageHistory.push({ stage: status, changedBy: req.user._id, note: note || "" });
 
         if (status === "Lost") {
             lead.lostReason = lostReason || lead.lostReason;
