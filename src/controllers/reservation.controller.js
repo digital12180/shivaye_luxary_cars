@@ -190,7 +190,7 @@ export const publicCreateReservation = async (req, res, next) => {
         const vehiclePrice = Number(vehicle.askingPrice) || 0;
         let reservationAmount = 25000;
         if (vehiclePrice > 2500000) {
-            reservationAmount = vehiclePrice * 0.10;
+            reservationAmount =50000;
         }
 
         /* 6. Create reservation — vehicle stays "Available" */
