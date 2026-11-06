@@ -144,17 +144,6 @@ export const publicCreateReservation = async (req, res, next) => {
             return fail(res, `Vehicle is currently ${vehicle.status} and cannot be reserved`, 409);
         }
 
-        /* 2. Block if another customer is already mid-payment on this vehicle */
-        const existingPaymentPending = await Reservation.findOne({
-            vehicle: vehicle._id,
-            paymentStatus: "pending",
-            status: "Active",                       // ✅ FIX: only "Active" (schema enum)
-            expiresAt: { $gt: new Date() },
-        });
-        if (existingPaymentPending) {
-            return fail(res, "Vehicle is currently in payment process by another customer", 409);
-        }
-
         /* 3. Customer — name-aware lookup (senior's rule)
               Same phone + different name = NEW customer, don't reuse old record */
         let customer = await Customer.findOne({
