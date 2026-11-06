@@ -70,8 +70,8 @@ const vehicleSchema = new mongoose.Schema(
 
         ownership: {
             type: String,
-            enum: ["First", "Second", "Third", "Fourth", "Other"],
-            default: "First",
+            enum: ["1st", "2nd", "3rd", "4th", "Other"],
+            default: "1st",
         },
 
         kilometers: { type: Number, required: true, min: 0, index: true },
