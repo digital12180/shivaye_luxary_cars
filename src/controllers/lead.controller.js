@@ -73,12 +73,16 @@ export const publicCreateLead = async (req, res, next) => {
 
         // 6. Handle Source Enum (FIX FOR ERROR 3)
         // Lead schema me google_ads allowed nahi hai, toh fallback lagao
-        const allowedLeadSources = ["Website", "Manual", "Walk-in", "Referral", "Phone", "Social Media", "Other"];
-        let leadSource = "Website";
+        const allowedLeadSources =  [
+                "google_ads", "facebook_ads", "instagram", "organic",
+                "direct_website", "whatsapp", "phone", "walk_in",
+                "referral", "manual", "other",
+            ];
+        let leadSource = "direct_website";
         if (source && allowedLeadSources.includes(source)) {
             leadSource = source;
         } else if (source === "google_ads" || source === "facebook_ads") {
-            leadSource = "Website"; // Fallback for ads
+            leadSource = "direct_website"; // Fallback for ads
         }
 
         // 7. Handle Budget (FIX FOR ERROR 2)
@@ -383,7 +387,7 @@ export const createLead = async (req, res, next) => {
             interestedVehicle: interestedVehicle || "Unknown",
             brand: brandId,                 // ✅ ObjectId or null
             budget: budget ?? null,
-            source: source || "Website",
+            source: source || "direct_website",
             status: status || "New",
             nextFollowUpAt: nextFollowUpAt ? new Date(nextFollowUpAt) : null,
             city,

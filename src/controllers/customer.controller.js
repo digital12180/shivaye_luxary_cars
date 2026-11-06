@@ -32,7 +32,7 @@ export const publicCreateCustomer = async (req, res, next) => {
 
         customer = await Customer.create({
             name, email, phone, city, state,
-            source: source || "Website",
+            source: source || "direct_website",
             attribution: attribution || {},
             interestedIn: interestedIn || "buy",
             notes,
