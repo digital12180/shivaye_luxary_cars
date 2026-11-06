@@ -44,14 +44,12 @@ const customerSchema = new mongoose.Schema(
         source: {
             type: String,
             enum: [
-                "Website", "Referral", "Walk-in", "Instagram", 
-                "Carwale", "Google Ads", "Facebook Ads", 
-                "WhatsApp", "Phone", "Organic", "Manual", "Other"
+                "google_ads", "facebook_ads", "instagram", "organic",
+                "direct_website", "whatsapp", "phone", "walk_in",
+                "referral", "manual", "other",
             ],
-            default: "Website",
-            index: true,
+            default: "manual",
         },
-
         attribution: {
             utmSource: { type: String, default: null },
             utmMedium: { type: String, default: null },
@@ -99,7 +97,7 @@ customerSchema.pre("save", async function () {
         const count = await mongoose.model("Customer").countDocuments();
         this.customerNumber = `CU-${String(count + 3700).padStart(5, "0")}`;
     }
-    
+
     // Password hashing
     if (this.isModified("password") && this.password) {
         this.password = await bcrypt.hash(this.password, 12);

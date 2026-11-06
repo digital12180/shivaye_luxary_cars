@@ -160,7 +160,11 @@ const reservationSchema = new mongoose.Schema(
         /* ============ Source & Consent ============ */
         source: {
             type: String,
-            enum: ["google_ads", "facebook_ads", "instagram", "organic", "direct_website", "whatsapp", "phone", "walk_in", "referral", "manual", "other"],
+            enum: [
+                "google_ads", "facebook_ads", "instagram", "organic",
+                "direct_website", "whatsapp", "phone", "walk_in",
+                "referral", "manual", "other",
+            ],
             default: "manual",
         },
 

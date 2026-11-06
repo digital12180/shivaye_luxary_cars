@@ -68,13 +68,12 @@ const leadSchema = new mongoose.Schema(
         source: {
             type: String,
             enum: [
-                "Website", "Instagram", "Referral", "Walk-in",
-                "Google Ads", "Facebook Ads", "WhatsApp", "Phone", "Other"
+                "google_ads", "facebook_ads", "instagram", "organic",
+                "direct_website", "whatsapp", "phone", "walk_in",
+                "referral", "manual", "other",
             ],
-            required: true,
-            index: true,
+            default: "manual",
         },
-
         status: {
             type: String,
             enum: [
