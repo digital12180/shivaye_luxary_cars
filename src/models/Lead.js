@@ -186,9 +186,6 @@ leadSchema.pre("save", async function () {
     }
 });
 
-leadSchema.pre(/^find/, function () {
-    this.where({ deletedAt: null });
-});
 leadSchema.pre("save", function () {
     if (this.isModified("status")) {
         const prev = this.$__.priorDoc?.status;

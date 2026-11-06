@@ -32,9 +32,7 @@ export const publicCreateLead = async (req, res, next) => {
         const vehicle = await Vehicle.findById(vehicleId);
         if (!vehicle) return fail(res, `Vehicle not found (id: ${vehicleId})`, 404);
 
-        // 3. Resolve / create customer
         // 3. Resolve / create customer — name-aware (senior's rule)
-        // ✅ FIX P5: same phone + different name = new customer, don't reuse old
         let customer = await Customer.findOne({
             phone,
             name: new RegExp(`^${name.trim()}$`, "i"),
@@ -58,38 +56,32 @@ export const publicCreateLead = async (req, res, next) => {
             campaign = await Campaign.findById(campaignId).select("_id");
         }
 
-        // 5. Resolve brand (FIX FOR ERROR 1)
+        // 5. Resolve brand
         let brandId = null;
-        // Agar vehicle me brand ka ObjectId hai
         if (vehicle.brand && mongoose.isValidObjectId(vehicle.brand)) {
             brandId = vehicle.brand;
-        }
-        // Agar vehicle me brand ka String hai (jaise "TATA"), toh Brand collection se dhoondho
-        else if (vehicle.brand || vehicleBrand) {
+        } else if (vehicle.brand || vehicleBrand) {
             const brandName = vehicle.brand || vehicleBrand;
             const brandDoc = await Brand.findOne({ name: new RegExp(`^${brandName.trim()}$`, "i") }).select("_id");
             brandId = brandDoc?._id || null;
         }
 
-        // 6. Handle Source Enum (FIX FOR ERROR 3)
-        // Lead schema me google_ads allowed nahi hai, toh fallback lagao
-        const allowedLeadSources =  [
-                "google_ads", "facebook_ads", "instagram", "organic",
-                "direct_website", "whatsapp", "phone", "walk_in",
-                "referral", "manual", "other",
-            ];
+        // 6. Handle Source Enum 
+        // ✅ FIX: Removed syntax error and matched exact Lead schema enum
+        const allowedLeadSources = [
+            "google_ads", "facebook_ads", "instagram", "organic",
+            "direct_website", "whatsapp", "phone", "walk_in",
+            "referral", "manual", "other",
+        ];
         let leadSource = "direct_website";
         if (source && allowedLeadSources.includes(source)) {
             leadSource = source;
-        } else if (source === "google_ads" || source === "facebook_ads") {
-            leadSource = "direct_website"; // Fallback for ads
         }
 
-        // 7. Handle Budget (FIX FOR ERROR 2)
-        // Lead schema me budget ek Number hai, Object nahi.
+        // 7. Handle Budget
         const finalBudget = budgetMax || budgetMin || null;
 
-        // 8. Duplicate lead detection
+        // 8. Duplicate lead detection (within 30 days)
         const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
         const existingLead = await Lead.findOne({
             customer: customer._id,
@@ -117,7 +109,6 @@ export const publicCreateLead = async (req, res, next) => {
                 meta: { attribution: attribution || {}, vehicle: vehicle._id, campaign: campaign?._id || null },
             });
 
-            // Populate everything before sending response
             await existingLead.populate([
                 { path: "customer", select: "name phone email city" },
                 { path: "vehicle", select: "brand model year price stockId" },
@@ -133,12 +124,12 @@ export const publicCreateLead = async (req, res, next) => {
             customer: customer._id,
             vehicle: vehicle._id,
             campaign: campaign?._id || null,
-            leadType: leadType || "Purchase",
-            source: leadSource, // ✅ Fixed Enum
+            enquiryType: leadType || "Purchase", // ✅ FIX: leadType mapped to enquiryType
+            source: leadSource,
             requirement,
             interestedVehicle: vehicleModel || vehicle.model || "Unknown",
-            brand: brandId, // ✅ Fixed ObjectId
-            budget: finalBudget, // ✅ Fixed Number
+            brand: brandId,
+            budget: finalBudget,
             notes,
             attribution: {
                 ...(attribution || {}),
@@ -178,7 +169,6 @@ export const publicCreateLead = async (req, res, next) => {
         next(err);
     }
 };
-
 /* ================= CRM ================= */
 // Most recent: GET /api/v1/leads?sort=recent
 
@@ -337,7 +327,7 @@ export const createLead = async (req, res, next) => {
             name, mobile, email,
             enquiryType, interestedVehicle, brand,
             budget, source, assignedTo, status,
-            nextFollowUpAt, city, notes,
+            nextFollowUpAt, city, notes, priority
         } = req.body;
 
         // ---- Validate brand (now ObjectId -> Brand) ----
@@ -362,13 +352,22 @@ export const createLead = async (req, res, next) => {
             customer = await Customer.findById(customerId);
             if (!customer) return fail(res, "Customer not found", 404);
         } else if (name && mobile) {
-            customer = await Customer.create({
-                name,
+            // ✅ FIX: Check if EXACT phone AND name combination exists
+            customer = await Customer.findOne({
                 phone: mobile,
-                email,
-                city,
-                source: source || "Manual",
+                name: new RegExp(`^${name.trim()}$`, "i"),
             });
+
+            // ✅ If not found, create a new customer (Senior's rule: same phone + diff name = new customer)
+            if (!customer) {
+                customer = await Customer.create({
+                    name,
+                    phone: mobile,
+                    email,
+                    city,
+                    source: source || "manual", // Fixed default
+                });
+            }
         } else {
             return fail(res, "Customer ID or Name+Mobile is required", 400);
         }
@@ -385,13 +384,14 @@ export const createLead = async (req, res, next) => {
             assignedTo: assignedTo || null,
             enquiryType: enquiryType || "Purchase",
             interestedVehicle: interestedVehicle || "Unknown",
-            brand: brandId,                 // ✅ ObjectId or null
+            brand: brandId,
             budget: budget ?? null,
-            source: source || "direct_website",
+            source: source || "manual",     // ✅ Fixed default to match schema enum
             status: status || "New",
             nextFollowUpAt: nextFollowUpAt ? new Date(nextFollowUpAt) : null,
             city,
             notes,
+            priority: priority || "warm",
             createdBy: req.user._id,
             updatedBy: req.user._id,
             attribution: {
@@ -400,8 +400,11 @@ export const createLead = async (req, res, next) => {
             },
         });
 
-        // populate brand for response so frontend gets { _id, name }
-        await lead.populate("brand", "name");
+        // populate brand & customer for response
+        await lead.populate([
+            { path: "brand", select: "name" },
+            { path: "customer", select: "name phone email" }
+        ]);
 
         return ok(res, lead, "Lead created", 201);
     } catch (err) {
