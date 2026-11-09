@@ -343,7 +343,7 @@ export async function getMyReservedCars(req, res) {
 
         const reservations = await Reservation.find({
             customer: customerId,
-            status: "reserved",          // adapt to your status field
+            status: "Reserved",          // adapt to your status field
         })
             .populate("vehicle")
             .sort({ createdAt: -1 })
