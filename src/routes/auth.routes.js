@@ -23,4 +23,5 @@ router.post("/reset-password/:token", resetPassword);
 router.get("/me", verifyJWT, me);
 router.patch("/update-profile", verifyJWT, updateProfile);
 
+
 export default router;

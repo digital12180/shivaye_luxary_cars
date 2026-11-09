@@ -218,10 +218,6 @@ export const getDashboardData = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   BRD 34.1 — Management Overview KPIs
-   GET /api/v1/analytics/overview
-   ============================================================ */
 export const getOverview = async (req, res, next) => {
     try {
         const scopeDate = parseRange(req);
@@ -304,10 +300,6 @@ export const getOverview = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   BRD 34.2 — Sales Analytics
-   GET /api/v1/analytics/sales?year=2025
-   ============================================================ */
 export const getSalesAnalytics = async (req, res, next) => {
     try {
         const year = Number(req.query.year) || new Date().getFullYear();
@@ -439,10 +431,6 @@ export const getSalesAnalytics = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   BRD 34.3 — Customer & Lead Analytics
-   GET /api/v1/analytics/leads
-   ============================================================ */
 export const getLeadAnalytics = async (req, res, next) => {
     try {
         const scopeDate = parseRange(req);
@@ -519,10 +507,6 @@ export const getLeadAnalytics = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   BRD 34.4 + 11.2 — Marketing Source Analytics
-   GET /api/v1/analytics/sources
-   ============================================================ */
 export const getSourceAnalytics = async (req, res, next) => {
     try {
         const scopeDate = parseRange(req);
@@ -602,10 +586,6 @@ export const getSourceAnalytics = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   BRD 12 + 15 — Location demand
-   GET /api/v1/analytics/locations
-   ============================================================ */
 export const getLocationAnalytics = async (req, res, next) => {
     try {
         const scopeDate = parseRange(req);
@@ -650,10 +630,7 @@ export const getLocationAnalytics = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   BRD 15 — Inventory analytics
-   GET /api/v1/analytics/inventory
-   ============================================================ */
+
 export const getInventoryAnalytics = async (req, res, next) => {
     try {
         const [byStatus, byBrand, byCity, ageing, valueByStatus] = await Promise.all([
@@ -710,10 +687,6 @@ export const getInventoryAnalytics = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   BRD 15 — Sales Funnel
-   GET /api/v1/analytics/funnel
-   ============================================================ */
 export const getSalesFunnel = async (req, res, next) => {
     try {
         const scopeDate = parseRange(req);
@@ -757,10 +730,6 @@ export const getSalesFunnel = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   BRD 15 — KM driven demand bands
-   GET /api/v1/analytics/km-bands
-   ============================================================ */
 export const getKmBandAnalytics = async (req, res, next) => {
     try {
         const scopeDate = parseRange(req);
@@ -808,10 +777,6 @@ export const getKmBandAnalytics = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   BRD 15 — Price band demand (leads)
-   GET /api/v1/analytics/price-bands
-   ============================================================ */
 export const getPriceBandAnalytics = async (req, res, next) => {
     try {
         const scopeDate = parseRange(req);
@@ -864,10 +829,6 @@ export const getPriceBandAnalytics = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   BRD 15 — Sales executive performance
-   GET /api/v1/analytics/executives
-   ============================================================ */
 export const getExecutiveAnalytics = async (req, res, next) => {
     try {
         const scopeDate = parseRange(req);
@@ -940,10 +901,6 @@ export const getExecutiveAnalytics = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   BRD 15 — Reservation + Payment analytics
-   GET /api/v1/analytics/payments
-   ============================================================ */
 export const getPaymentAnalytics = async (req, res, next) => {
     try {
         const scopeDate = parseRange(req);
@@ -1045,10 +1002,6 @@ export const getPaymentAnalytics = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   BRD 15 — Campaign performance
-   GET /api/v1/analytics/campaigns
-   ============================================================ */
 export const getCampaignAnalytics = async (req, res, next) => {
     try {
         const scopeDate = parseRange(req);
@@ -1097,10 +1050,6 @@ export const getCampaignAnalytics = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   BRD 9.1 — Follow-ups snapshot (today / overdue / upcoming)
-   GET /api/v1/analytics/follow-ups
-   ============================================================ */
 export const getFollowUpAnalytics = async (req, res, next) => {
     try {
         const scopeFilter =

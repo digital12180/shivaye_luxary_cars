@@ -309,3 +309,26 @@ export const getCustomerStats = async (req, res, next) => {
         next(err);
     }
 };
+
+/**
+ * GET /api/customer/reserved-cars
+ * Auth required (customer JWT)
+ */
+export async function getMyReservedCars(req, res) {
+    try {
+        const customerId = req.user.id; // set by auth middleware
+
+        const reservations = await Reservation.find({
+            customer: customerId,
+            status: "reserved",          // adapt to your status field
+        })
+            .populate("vehicle")
+            .sort({ createdAt: -1 })
+            .lean();
+
+        return res.json({ success: true, data: reservations });
+    } catch (err) {
+        console.error("getMyReservedCars error:", err);
+        return res.status(500).json({ success: false, message: "Server error" });
+    }
+}

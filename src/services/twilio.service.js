@@ -13,54 +13,104 @@ class TwilioService {
     /**
      * Send OTP via SMS (Using Twilio Verify for India compliance)
      */
-    async sendOTP(phoneNumber) {
+    // async sendOTP(phoneNumber) {
+    //     try {
+    //         // Format Indian number
+    //         let formattedNumber = this.formatIndianNumber(phoneNumber);
+
+    //         console.log("formatted number ------------", formattedNumber);
+
+
+    //         if (this.useVerify) {
+    //             // Using Twilio Verify Service (Recommended for India)
+    //             const verification = await this.client.verify.v2
+    //                 .services(this.verifyServiceSid)
+    //                 .verifications.create({
+    //                     to: formattedNumber,
+    //                     channel: 'sms'
+    //                 });
+
+    //             return {
+    //                 success: true,
+    //                 status: verification.status,
+    //                 method: 'verify'
+    //             };
+    //         } else {
+    //             // Using Programmable SMS (Need DLT compliance)
+    //             const otp = this.generateOTP();
+
+    //             console.log("otpp=========================", otp);
+
+
+    //             const message = await this.client.messages.create({
+    //                 body: `Your OTP for login/registration is: ${otp}. Valid for 5 minutes. Do not share this OTP with anyone.`,
+    //                 to: formattedNumber,
+    //                 from: process.env.TWILIO_PHONE_NUMBER
+    //             });
+
+    //             return {
+    //                 success: true,
+    //                 messageSid: message.sid,
+    //                 otp: process.env.NODE_ENV === 'development' ? otp : undefined,
+    //                 method: 'programmable'
+    //             };
+    //         }
+    //     } catch (error) {
+    //         console.error('Twilio Send OTP Error:', error);
+    //         return {
+    //             success: false,
+    //             error: error.message
+    //         };
+    //     }
+    // }
+
+
+    async sendOTP(phoneNumber, channel = 'whatsapp') {   // 👈 add param
         try {
-            // Format Indian number
-            let formattedNumber = this.formatIndianNumber(phoneNumber);
+            // let formattedNumber = this.formatIndianNumber(phoneNumber);
 
-            console.log("formatted number ------------", formattedNumber);
+            // if (this.useVerify) {
+            //     const verification = await this.client.verify.v2
+            //         .services(this.verifyServiceSid)
+            //         .verifications.create({
+            //             to: formattedNumber,
+            //             channel: channel        // 👈 'whatsapp' or 'sms'
+            //         });
 
+            //     return { success: true, status: verification.status, method: 'verify' };
+            // } else {
+            //     // Using Programmable SMS (Need DLT compliance)
+            //     const otp = this.generateOTP();
 
-            if (this.useVerify) {
-                // Using Twilio Verify Service (Recommended for India)
-                const verification = await this.client.verify.v2
-                    .services(this.verifyServiceSid)
-                    .verifications.create({
-                        to: formattedNumber,
-                        channel: 'sms'
-                    });
-
-                return {
-                    success: true,
-                    status: verification.status,
-                    method: 'verify'
-                };
-            } else {
-                // Using Programmable SMS (Need DLT compliance)
-                const otp = this.generateOTP();
-
-                console.log("otpp=========================", otp);
+            //     console.log("otpp=========================", otp);
 
 
-                const message = await this.client.messages.create({
-                    body: `Your OTP for login/registration is: ${otp}. Valid for 5 minutes. Do not share this OTP with anyone.`,
-                    to: formattedNumber,
-                    from: process.env.TWILIO_PHONE_NUMBER
-                });
+            //     const message = await this.client.messages.create({
+            //         body: `Your OTP for login/registration is: ${otp}. Valid for 5 minutes. Do not share this OTP with anyone.`,
+            //         to: formattedNumber,
+            //         from: process.env.TWILIO_PHONE_NUMBER
+            //     });
 
-                return {
-                    success: true,
-                    messageSid: message.sid,
-                    otp: process.env.NODE_ENV === 'development' ? otp : undefined,
-                    method: 'programmable'
-                };
-            }
+            //     return {
+            //         success: true,
+            //         messageSid: message.sid,
+            //         otp: process.env.NODE_ENV === 'development' ? otp : undefined,
+            //         method: 'programmable'
+            //     };
+            // }
+            const otp = this.generateOTP();
+
+            console.log("otpp=========================", otp);
+            return {
+                success: true,
+                otp: otp
+                // messageSid: message.sid,
+                // otp: process.env.NODE_ENV === 'development' ? otp : undefined,
+                // method: 'programmable'
+            };
         } catch (error) {
             console.error('Twilio Send OTP Error:', error);
-            return {
-                success: false,
-                error: error.message
-            };
+            return { success: false, error: error.message };
         }
     }
 

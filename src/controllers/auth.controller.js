@@ -15,6 +15,287 @@ const cookieOpts = {
     sameSite: "none",
 };
 
+// controllers/auth.controller.js
+
+import Customer from "../models/Customer.js";
+import { twilioService } from "../services/twilio.service.js";
+
+/**
+ * POST /api/auth/customer/send-otp
+ * body: { phone }
+ */
+export async function sendCustomerLoginOTP(req, res) {
+    try {
+        const { phone } = req.body;
+
+        if (!phone) {
+            return res.status(400).json({ success: false, message: "Phone required" });
+        }
+
+        const customer = await Customer.findOne({ phone: phone.trim() });
+
+        // 🔒 Do NOT reveal whether phone exists? 
+        // For a car-reservation site it's usually okay to say "not registered".
+        // If you want privacy, always return success and only send if exists.
+        if (!customer) {
+            return res.status(404).json({
+                success: false,
+                message: "No account found for this number. Please reserve a car first.",
+            });
+        }
+
+        if (!customer.isActive) {
+            return res.status(403).json({ success: false, message: "Account disabled" });
+        }
+
+        // Rate limit: 1 OTP per 60 seconds
+        if (customer.otpLastSentAt && (Date.now() - customer.otpLastSentAt.getTime()) < 60_000) {
+            return res.status(429).json({
+                success: false,
+                message: "Please wait 60 seconds before requesting another OTP.",
+            });
+        }
+
+        // Send OTP via WhatsApp using Twilio Verify
+        const result = await twilioService.sendOTP(phone, "whatsapp");
+
+        if (!result.success) {
+            return res.status(500).json({
+                success: false,
+                message: "Failed to send OTP",
+                error: result.error,
+            });
+        }
+
+        // Track last sent time (needs select:false fields → use updateOne or direct set)
+        await Customer.updateOne(
+            { _id: customer._id },
+            { $set: { otpLastSentAt: new Date(), otp: result.otp } }
+        );
+
+        return res.json({
+            success: true,
+            message: "OTP sent on WhatsApp",
+            // method: result.method,   // 'verify'
+            method: 'verify',
+            otp: result.otp, // only for development/testing; remove in production
+        });
+    } catch (err) {
+        console.error("sendCustomerLoginOTP error:", err);
+        return res.status(500).json({ success: false, message: "Server error" });
+    }
+}
+/**
+ * POST /api/auth/customer/verify-otp
+ * body: { phone, code }
+ */
+// export async function verifyCustomerLoginOTP(req, res) {
+//     try {
+//         const { phone, code } = req.body;
+
+//         if (!phone || !code) {
+//             return res.status(400).json({ success: false, message: "Phone and code required" });
+//         }
+
+//         const customer = await Customer.findOne({ phone: phone.trim() })
+//             .select("+otpAttempts");   // if using programmable branch
+
+//         if (!customer) {
+//             return res.status(404).json({ success: false, message: "Customer not found" });
+//         }
+
+//         // Brute-force guard (works for both verify & programmable paths)
+//         if (customer.otpAttempts >= 5) {
+//             return res.status(429).json({
+//                 success: false,
+//                 message: "Too many attempts. Request a new OTP.",
+//             });
+//         }
+
+//         // Verify with Twilio
+//         // const result = await twilioService.verifyOTP(phone, code);
+
+//         // if (!result.success) {
+//         //     // Increment attempts
+//         //     await Customer.updateOne(
+//         //         { _id: customer._id },
+//         //         { $inc: { otpAttempts: 1 } }
+//         //     );
+//         //     return res.status(400).json({
+//         //         success: false,
+//         //         message: "Invalid or expired OTP",
+//         //     });
+//         // }
+//         if (code !== customer.otp) { // For testing, accept a fixed OTP
+//             await Customer.updateOne(
+//                 { _id: customer._id },
+//                 { $inc: { otpAttempts: 1 } }
+//             );
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "Invalid or expired OTP",
+//             });
+//         }
+
+//         // ✅ Success → mark verified, reset counters
+//         customer.isVerified = true;
+//         customer.otpAttempts = 0;
+//         customer.otpLastSentAt = null;
+//         customer.lastContactedAt = new Date();
+
+//         const accessToken = signAccessToken(customer);
+//         const refreshToken = signRefreshToken(customer);
+
+//         // Store hash of refresh token (your schema has refreshTokenHash)
+//         customer.refreshTokenHash = crypto
+//             .createHash("sha256")
+//             .update(refreshToken)
+//             .digest("hex");
+
+//         await customer.save();
+
+//         // Cookie (recommended) or return tokens in body
+//         res.cookie("refreshToken", refreshToken, {
+//             httpOnly: true,
+//             secure: process.env.NODE_ENV === "production",
+//             sameSite: "strict",
+//             maxAge: 30 * 24 * 60 * 60 * 1000,
+//         });
+
+//         return res.json({
+//             success: true,
+//             message: "Login successful",
+//             accessToken,
+//             customer: {
+//                 id: customer._id,
+//                 customerNumber: customer.customerNumber,
+//                 name: customer.name,
+//                 phone: customer.phone,
+//                 email: customer.email,
+//                 isVerified: customer.isVerified,
+//             },
+//         });
+//     } catch (err) {
+//         console.error("verifyCustomerLoginOTP error:", err);
+//         return res.status(500).json({ success: false, message: "Server error" });
+//     }
+// }
+
+
+async function verifyOtpLocally(customer, code) {
+    // No OTP on record → treat as invalid
+    if (!customer.otp) return false;
+
+    // Optional: enforce expiry if you have otpExpiresAt on the schema
+    // if (customer.otpExpiresAt && customer.otpExpiresAt < new Date()) return false;
+
+    // Constant-time comparison to avoid timing attacks
+    const storedOtp = String(customer.otp);
+    const submittedOtp = String(code);
+
+    const storedBuf = Buffer.from(storedOtp);
+    const submittedBuf = Buffer.from(submittedOtp);
+
+    if (storedBuf.length !== submittedBuf.length) return false;
+
+    return crypto.timingSafeEqual(storedBuf, submittedBuf);
+}
+
+export async function verifyCustomerLoginOTP(req, res) {
+    try {
+        const { phone, code } = req.body;
+
+        if (!phone || !code) {
+            return res.status(400).json({
+                success: false,
+                message: "Phone and code required",
+            });
+        }
+
+        const customer = await Customer.findOne({ phone: phone.trim() })
+            .select("+otpAttempts +otp");
+
+        if (!customer) {
+            return res.status(404).json({
+                success: false,
+                message: "Customer not found",
+            });
+        }
+
+        // Brute-force guard
+        if (customer.otpAttempts >= 5) {
+            return res.status(429).json({
+                success: false,
+                message: "Too many attempts. Request a new OTP.",
+            });
+        }
+
+        // Local verification (no Twilio)
+        const isValid = await verifyOtpLocally(customer, code);
+
+        if (!isValid) {
+            await Customer.updateOne(
+                { _id: customer._id },
+                { $inc: { otpAttempts: 1 } }
+            );
+            return res.status(400).json({
+                success: false,
+                message: "Invalid or expired OTP",
+            });
+        }
+
+        // ✅ Success → mark verified, reset counters, clear OTP
+        customer.isVerified = true;
+        customer.otpAttempts = 0;
+        customer.otpLastSentAt = null;
+        customer.otp = null; // one-time use
+        customer.lastContactedAt = new Date();
+
+        const payload = {
+            id: customer._id.toString(),
+            customerNumber: customer.customerNumber,
+            phone: customer.phone,
+            role: "customer",
+        };
+
+        const accessToken = signAccessToken(payload);
+        const refreshToken = signRefreshToken(payload);
+        customer.refreshTokenHash = crypto
+            .createHash("sha256")
+            .update(refreshToken)
+            .digest("hex");
+
+        await customer.save();
+
+        res.cookie("refreshToken", refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "strict",
+            maxAge: 30 * 24 * 60 * 60 * 1000,
+        });
+
+        return res.json({
+            success: true,
+            message: "Login successful",
+            accessToken,
+            customer: {
+                id: customer._id,
+                customerNumber: customer.customerNumber,
+                name: customer.name,
+                phone: customer.phone,
+                email: customer.email,
+                isVerified: customer.isVerified,
+            },
+        });
+    } catch (err) {
+        console.error("verifyCustomerLoginOTP error:", err);
+        return res.status(500).json({
+            success: false,
+            message: "Server error",
+        });
+    }
+}
+
 export const register = async (req, res, next) => {
     try {
         const { name, email, phone, password, role } = req.body;
