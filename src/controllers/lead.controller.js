@@ -477,17 +477,68 @@ const STAGE_RANK = {
     Won: 8,
 };
 
+// export const updateLeadStatus = async (req, res, next) => {
+//     try {
+//         const { status, note, lostReason, lostReasonCategory } = req.body;
+
+//         const allowed = Object.keys(STAGE_RANK).concat(["Lost"]);
+//         if (!allowed.includes(status))
+//             return fail(res, "Invalid status", 400);
+
+//         const lead = await Lead.findById(req.params.id);
+//         if (!lead) return fail(res, "Lead not found", 404);
+
+//         if (
+//             req.user.role === "sales_executive" &&
+//             String(lead.assignedTo) !== String(req.user._id)
+//         ) {
+//             return fail(res, "Not authorized", 403);
+//         }
+
+//         // ✅ Forward-only guard (except Lost / Won)
+//         if (status !== "Lost" && status !== "Won") {
+//             const currentRank = STAGE_RANK[lead.status] ?? -1;
+//             const newRank = STAGE_RANK[status] ?? -1;
+//             if (newRank < currentRank) {
+//                 return fail(
+//                     res,
+//                     `Cannot move lead backward from "${lead.status}" to "${status}"`,
+//                     400
+//                 );
+//             }
+//         }
+
+//         lead.status = status;
+//         lead.updatedBy = req.user._id;
+//         lead.stageHistory = lead.stageHistory || [];
+//         lead.stageHistory.push({ stage: status, changedBy: req.user._id, note: note || "" });
+
+//         if (status === "Lost") {
+//             lead.lostReason = lostReason || lead.lostReason;
+//             lead.lostReasonCategory = lostReasonCategory || lead.lostReasonCategory;
+//         }
+
+//         await lead.save();
+//         return ok(res, lead, `Lead marked as ${status}`);
+//     } catch (err) {
+//         next(err);
+//     }
+// };
+
 export const updateLeadStatus = async (req, res, next) => {
     try {
         const { status, note, lostReason, lostReasonCategory } = req.body;
 
+        // 1. Validate status is allowed
         const allowed = Object.keys(STAGE_RANK).concat(["Lost"]);
-        if (!allowed.includes(status))
+        if (!allowed.includes(status)) {
             return fail(res, "Invalid status", 400);
+        }
 
         const lead = await Lead.findById(req.params.id);
         if (!lead) return fail(res, "Lead not found", 404);
 
+        // Authorization check
         if (
             req.user.role === "sales_executive" &&
             String(lead.assignedTo) !== String(req.user._id)
@@ -495,10 +546,17 @@ export const updateLeadStatus = async (req, res, next) => {
             return fail(res, "Not authorized", 403);
         }
 
-        // ✅ Forward-only guard (except Lost / Won)
-        if (status !== "Lost" && status !== "Won") {
+        // 2. Forward-only Guard logic
+        // Rule: Once Won, no further stage changes.
+        if (lead.status === "Won" && status !== "Won") {
+            return fail(res, "Cannot change status of a Won lead", 400);
+        }
+
+        // Rule: Cannot move backwards UNLESS current status is 'Lost' (allowing re-entry into pipeline)
+        if (lead.status !== "Lost" && status !== "Lost" && status !== "Won") {
             const currentRank = STAGE_RANK[lead.status] ?? -1;
             const newRank = STAGE_RANK[status] ?? -1;
+
             if (newRank < currentRank) {
                 return fail(
                     res,
@@ -508,14 +566,27 @@ export const updateLeadStatus = async (req, res, next) => {
             }
         }
 
+        // Prevent setting status to the exact same stage (optional, but good practice)
+        if (lead.status === status) {
+            return ok(res, lead, `Lead is already in ${status} stage`);
+        }
+
+        // 3. Apply the changes
         lead.status = status;
         lead.updatedBy = req.user._id;
-        lead.stageHistory = lead.stageHistory || [];
-        lead.stageHistory.push({ stage: status, changedBy: req.user._id, note: note || "" });
+
+        // Note: Your Mongoose model has a pre('save') hook that automatically handles stageHistory.push
+        // so manually pushing here is technically redundant, but safe if you keep it.
 
         if (status === "Lost") {
             lead.lostReason = lostReason || lead.lostReason;
             lead.lostReasonCategory = lostReasonCategory || lead.lostReasonCategory;
+        }
+
+        // Reset lost reason if the lead moves out of Lost stage
+        if (status !== "Lost" && lead.status === "Lost") {
+            lead.lostReason = null;
+            lead.lostReasonCategory = null;
         }
 
         await lead.save();
