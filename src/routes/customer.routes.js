@@ -12,6 +12,7 @@ import {
     toggleCustomerStatus,
     deleteCustomer,
     getCustomerStats,
+    getMyReservedCars
 } from "../controllers/customer.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 import { verifyCustomerJWT } from "../middleware/customerAuth.middleware.js";
@@ -23,7 +24,7 @@ const router = Router();
 
 router.post("/send-otp", sendCustomerLoginOTP);
 router.post("/verify-otp", verifyCustomerLoginOTP);
-router.get("/reserved-cars", requireCustomer, verifyCustomerLoginOTP);
+router.get("/reserved-cars", requireCustomer, getMyReservedCars);
 /* ============ PUBLIC ============ */
 
 router.post("/public", publicCreateCustomer);

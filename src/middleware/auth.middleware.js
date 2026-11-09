@@ -1,6 +1,7 @@
 import User from "../models/User.js";
 import { verifyAccessToken } from "../utils/jwt.js";
 import { throwError } from "../utils/response.js";
+import Customer from "../models/Customer.js"
 
 export const verifyJWT = async (req, res, next) => {
     try {
@@ -29,19 +30,26 @@ export const restrictTo = (...roles) => (req, res, next) => {
 };
 
 // middleware/auth.js
-export function requireCustomer(req, res, next) {
-    const auth = req.headers.authorization || "";
-    const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
-    if (!token) return res.status(401).json({ success: false, message: "No token" });
+export async function requireCustomer(req, res, next) {
 
     try {
-        const payload = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
-        if (payload.role !== "customer") {
-            return res.status(403).json({ success: false, message: "Not a customer token" });
-        }
-        req.user = payload;
+        const token =
+            req.cookies?.accessToken ||
+            req.header("Authorization")?.replace("Bearer ", "");
+
+        if (!token) throwError(401, "Unauthorized: token missing");
+
+        const decoded = verifyAccessToken(token);
+        const user = await Customer.findById(decoded.id);
+
+        console.log("Decoded Token:", decoded);
+
+        if (!user)
+            throwError(401, "Unauthorized: customer not found");
+
+        req.user = user;
         next();
-    } catch {
-        return res.status(401).json({ success: false, message: "Invalid token" });
+    } catch (err) {
+        next(err);
     }
 }
