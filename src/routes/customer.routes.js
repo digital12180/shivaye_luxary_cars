@@ -30,10 +30,10 @@ router.get("/reserved-cars", requireCustomer, getMyReservedCars);
 router.post("/public", publicCreateCustomer);
 
 /* ============ CUSTOMER PANEL ============ */
-router.get("/me", requireCustomer, getMyProfile);
-router.patch("/me", requireCustomer, updateMyProfile);
-router.post("/me/saved-cars/:vehicleId", requireCustomer, saveCar);
-router.delete("/me/saved-cars/:vehicleId", requireCustomer, removeSavedCar);
+router.get("/me", verifyCustomerJWT, getMyProfile);
+router.patch("/me", verifyCustomerJWT, updateMyProfile);
+router.post("/me/saved-cars/:vehicleId", verifyCustomerJWT, saveCar);
+router.delete("/me/saved-cars/:vehicleId", verifyCustomerJWT, removeSavedCar);
 
 /* ============ CRM / ADMIN ============ */
 router.get(

@@ -46,11 +46,13 @@ export const publicCreateCustomer = async (req, res, next) => {
     }
 };
 
-// GET /api/v1/customers/me  (Customer Panel)
+// GET /api/v1/customers/profile
 export const getMyProfile = async (req, res, next) => {
     try {
-        const customer = await Customer.findById(req.customer._id)
+        // ✅ Use req.user._id because your middleware sets req.user!
+        const customer = await Customer.findById(req.user._id)
             .populate("savedCars", "brand model year price images slug status");
+
         if (!customer) return fail(res, "Customer not found", 404);
         return ok(res, customer);
     } catch (err) {
@@ -71,7 +73,7 @@ export const updateMyProfile = async (req, res, next) => {
         });
 
         const customer = await Customer.findByIdAndUpdate(
-            req.customer._id,
+            req.user._id,
             payload,
             { new: true, runValidators: true }
         );
@@ -88,7 +90,7 @@ export const saveCar = async (req, res, next) => {
         const vehicle = await Vehicle.findById(req.params.vehicleId);
         if (!vehicle) return fail(res, "Vehicle not found", 404);
 
-        await Customer.findByIdAndUpdate(req.customer._id, {
+        await Customer.findByIdAndUpdate(req.user._id, {
             $addToSet: { savedCars: vehicle._id },
         });
 
@@ -101,7 +103,7 @@ export const saveCar = async (req, res, next) => {
 // DELETE /api/v1/customers/me/saved-cars/:vehicleId
 export const removeSavedCar = async (req, res, next) => {
     try {
-        await Customer.findByIdAndUpdate(req.customer._id, {
+        await Customer.findByIdAndUpdate(req.user._id, {
             $pull: { savedCars: req.params.vehicleId },
         });
         return ok(res, {}, "Car removed from saved");
