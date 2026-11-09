@@ -47,9 +47,30 @@ export const publicCreateCustomer = async (req, res, next) => {
 };
 
 // GET /api/v1/customers/profile
+// export const getMyProfile = async (req, res, next) => {
+//     try {
+//         // ✅ Use req.user._id because your middleware sets req.user!
+//         const customer = await Customer.findById(req.user._id)
+//             .populate("savedCars", "brand model year price images slug status");
+
+//         if (!customer) return fail(res, "Customer not found", 404);
+//         return ok(res, customer);
+//     } catch (err) {
+//         next(err);
+//     }
+// };
+
 export const getMyProfile = async (req, res, next) => {
     try {
-        // ✅ Use req.user._id because your middleware sets req.user!
+        // 1. Safely check if the middleware actually set req.user
+        if (!req.user || !req.user._id) {
+            return res.status(401).json({ 
+                success: false, 
+                message: "Unauthorized: req.user is missing. Check token/cookie transport." 
+            });
+        }
+
+        // 2. Proceed with the fetch
         const customer = await Customer.findById(req.user._id)
             .populate("savedCars", "brand model year price images slug status");
 
