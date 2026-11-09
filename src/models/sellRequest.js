@@ -50,11 +50,15 @@ const sellRequestSchema = new mongoose.Schema(
             enum: ["New", "Inspection Scheduled", "Offer Made", "Purchased", "Rejected"],
             default: "New",
         },
-        adminNotes: { type: String, trim: true },
+        additionalInfo: { type: String, trim: true },
+        serviceHistory: { type: String, trim: true },
+        insuranceValidity: { type: Date, trim: true },
+        accidentHistory: { type: String, trim: true },
         assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // Reference to CRM User/Admin
         
         // Soft Delete
         deletedAt: { type: Date, default: null },
+
     },
     { timestamps: true }
 );

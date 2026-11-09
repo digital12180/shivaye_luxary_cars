@@ -80,7 +80,14 @@ const vehicleSchema = new mongoose.Schema(
         price: { type: Number, min: 0 },
         soldPrice: { type: Number, min: 0, default: null },
 
-        registrationNumber: { type: String, trim: true, uppercase: true },
+        registrationNumber: {
+            type: String,
+            required: true,
+            unique: true,
+            trim: true,
+            uppercase: true, 
+            index: true
+        },
         description: { type: String, trim: true },
 
         features: [{ type: String, trim: true }],
