@@ -64,9 +64,9 @@ export const getMyProfile = async (req, res, next) => {
     try {
         // 1. Safely check if the middleware actually set req.user
         if (!req.user || !req.user._id) {
-            return res.status(401).json({ 
-                success: false, 
-                message: "Unauthorized: req.user is missing. Check token/cookie transport." 
+            return res.status(401).json({
+                success: false,
+                message: "Unauthorized: req.user is missing. Check token/cookie transport."
             });
         }
 
@@ -343,7 +343,7 @@ export async function getMyReservedCars(req, res) {
 
         const reservations = await Reservation.find({
             customer: customerId,
-            status: "Reserved",          // adapt to your status field
+            status: "Completed",          // adapt to your status field
         })
             .populate("vehicle")
             .sort({ createdAt: -1 })
