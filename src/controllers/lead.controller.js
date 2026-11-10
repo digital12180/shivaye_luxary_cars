@@ -10,11 +10,11 @@ import { extractAttribution } from "../services/attribution.service.js";
 import { captureLocation } from "../services/geolocation.service.js";
 import Brand from "../models/Brand.js"
 
-
 export const publicCreateLead = async (req, res, next) => {
     try {
+        // 1. Extract Attribution & Location using Services
         const attribution = extractAttribution(req);
-        const { ip, location } = await captureLocation(req);
+        const { ip, location } = await captureLocation(req); // getClientIp + resolveLocation combined
 
         const {
             name, phone, email, city,
@@ -23,31 +23,44 @@ export const publicCreateLead = async (req, res, next) => {
             requirement, budgetMin, budgetMax, notes, campaignId,
         } = req.body;
 
-        // 1. Validate required fields
+        // 2. Validate required fields
         if (!name || !phone) return fail(res, "Name and phone are required", 400);
         if (!vehicleId) return fail(res, "Vehicle ID is required", 400);
         if (!mongoose.isValidObjectId(vehicleId)) return fail(res, "Invalid vehicle ID format", 400);
 
-        // 2. Validate Vehicle
+        // 3. Validate Vehicle
         const vehicle = await Vehicle.findById(vehicleId);
         if (!vehicle) return fail(res, `Vehicle not found (id: ${vehicleId})`, 404);
 
-        // 3. Resolve / create customer — name-aware (senior's rule)
+        // 4. Resolve / create customer — name-aware
         let customer = await Customer.findOne({
             phone,
             name: new RegExp(`^${name.trim()}$`, "i"),
         });
+
         if (!customer) {
             customer = await Customer.create({
                 name, phone, email, city,
                 source: source || "direct_website",
                 attribution: attribution || {},
-                ipAddress: ip || req.ip || req.headers["x-forwarded-for"] || null,
-                ipLocation: location || null,
+                ipAddress: ip, // ✅ From service
+                ipLocation: location, // ✅ From service
             });
+        } else {
+            // ✅ Update customer's location/attribution if missing on re-enquiry
+            let customerUpdated = false;
+            if (!customer.ipLocation?.city && location?.city) {
+                customer.ipLocation = location;
+                customerUpdated = true;
+            }
+            if (ip && customer.ipAddress !== ip) {
+                customer.ipAddress = ip;
+                customerUpdated = true;
+            }
+            if (customerUpdated) await customer.save();
         }
 
-        // 4. Resolve campaign
+        // 5. Resolve campaign
         let campaign = null;
         if (attribution?.utmCampaign) {
             campaign = await Campaign.findOne({ "utm.campaign": attribution.utmCampaign }).select("_id");
@@ -56,7 +69,7 @@ export const publicCreateLead = async (req, res, next) => {
             campaign = await Campaign.findById(campaignId).select("_id");
         }
 
-        // 5. Resolve brand
+        // 6. Resolve brand
         let brandId = null;
         if (vehicle.brand && mongoose.isValidObjectId(vehicle.brand)) {
             brandId = vehicle.brand;
@@ -66,8 +79,7 @@ export const publicCreateLead = async (req, res, next) => {
             brandId = brandDoc?._id || null;
         }
 
-        // 6. Handle Source Enum 
-        // ✅ FIX: Removed syntax error and matched exact Lead schema enum
+        // 7. Handle Source Enum 
         const allowedLeadSources = [
             "google_ads", "facebook_ads", "instagram", "organic",
             "direct_website", "whatsapp", "phone", "walk_in",
@@ -76,12 +88,15 @@ export const publicCreateLead = async (req, res, next) => {
         let leadSource = "direct_website";
         if (source && allowedLeadSources.includes(source)) {
             leadSource = source;
+        } else if (attribution?.latestTouchSource) {
+            // ✅ Fallback to attribution-derived source if not sent explicitly
+            leadSource = attribution.latestTouchSource;
         }
 
-        // 7. Handle Budget
+        // 8. Handle Budget
         const finalBudget = budgetMax || budgetMin || null;
 
-        // 8. Duplicate lead detection (within 30 days)
+        // 9. Duplicate lead detection (within 30 days)
         const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
         const existingLead = await Lead.findOne({
             customer: customer._id,
@@ -93,12 +108,26 @@ export const publicCreateLead = async (req, res, next) => {
         if (existingLead) {
             // Update existing lead
             if (attribution) {
-                existingLead.attribution = { ...existingLead.attribution, ...attribution, latestTouchAt: new Date() };
+                existingLead.attribution = { 
+                    ...existingLead.attribution, 
+                    ...attribution, 
+                    latestTouchAt: new Date() 
+                };
             }
             if (campaign && !existingLead.campaign) existingLead.campaign = campaign._id;
             if (requirement) existingLead.requirement = requirement;
             if (notes) existingLead.notes = [existingLead.notes, notes].filter(Boolean).join("\n");
             if (finalBudget) existingLead.budget = finalBudget;
+
+            // ✅ Update location on existing lead
+            if (location?.city || city) {
+                existingLead.location = {
+                    country: location?.country || existingLead.location?.country || null,
+                    state: location?.state || existingLead.location?.state || null,
+                    city: city || location?.city || existingLead.location?.city || null,
+                };
+                existingLead.ipAddress = ip || existingLead.ipAddress;
+            }
 
             await existingLead.save();
 
@@ -119,12 +148,12 @@ export const publicCreateLead = async (req, res, next) => {
             return ok(res, { lead: existingLead, isDuplicate: true }, "Enquiry linked to existing lead", 200);
         }
 
-        // 9. Create new lead
+        // 10. Create new lead
         const lead = await Lead.create({
             customer: customer._id,
             vehicle: vehicle._id,
             campaign: campaign?._id || null,
-            enquiryType: leadType || "Purchase", // ✅ FIX: leadType mapped to enquiryType
+            enquiryType: leadType || "Purchase",
             source: leadSource,
             requirement,
             interestedVehicle: vehicleModel || vehicle.model || "Unknown",
@@ -136,16 +165,17 @@ export const publicCreateLead = async (req, res, next) => {
                 firstTouchAt: new Date(),
                 latestTouchAt: new Date(),
             },
+            // ✅ Location Priority: Form City > IP Location > Customer's saved location
             location: {
                 country: location?.country || customer.ipLocation?.country || null,
                 state: location?.state || customer.ipLocation?.state || null,
-                city: location?.city || customer.ipLocation?.city || city || customer.city || null,
+                city: city || location?.city || customer.ipLocation?.city || customer.city || null,
             },
-            ipAddress: ip || req.ip || req.headers["x-forwarded-for"] || null,
+            ipAddress: ip,
             createdBy: null, updatedBy: null,
         });
 
-        // 10. Populate response exactly like createLead
+        // 11. Populate response
         await lead.populate([
             { path: "customer", select: "name phone email city" },
             { path: "vehicle", select: "brand model year price stockId" },
@@ -153,7 +183,7 @@ export const publicCreateLead = async (req, res, next) => {
             { path: "campaign", select: "name" }
         ]);
 
-        // 11. Log activity
+        // 12. Log activity
         await LeadActivity.create({
             lead: lead._id, customer: customer._id,
             type: "system", title: "Lead created",
@@ -161,7 +191,7 @@ export const publicCreateLead = async (req, res, next) => {
             meta: { source: lead.source, campaign: campaign?._id || null, utmCampaign: attribution?.utmCampaign || null },
         });
 
-        // 12. Success response
+        // 13. Success response
         return ok(res, { lead, isDuplicate: false, campaignMatched: !!campaign }, "Enquiry submitted successfully", 201);
 
     } catch (err) {

@@ -1,5 +1,10 @@
 import SellRequest from "../models/sellRequest.js";
 import Customer from "../models/Customer.js"
+import {
+    uploadMultipleToCloudinary,
+    deleteMultipleFromCloudinary,
+} from "../utils/cloudinary.js";
+import mongoose from "mongoose";
 
 
 const PUBLIC_FIELDS = [
@@ -15,13 +20,14 @@ const pick = (obj, keys) =>
         if (obj[k] !== undefined) acc[k] = obj[k];
         return acc;
     }, {});
-
-
+    
 export const createSellRequest = async (req, res) => {
-    try {
-        const data = req.body;
+    const uploadedPublicIds = []; // track for rollback
 
-        // 1. Ensure phone and name are provided (required for Customer model)
+    try {
+        const data = req.body || {};
+
+        // 1. Validate required fields (Customer)
         if (!data.phone || !data.name) {
             return res.status(400).json({
                 success: false,
@@ -31,7 +37,7 @@ export const createSellRequest = async (req, res) => {
 
         // 2. Map source for Customer enum
         const customerSource = data.source
-            ? data.source.toLowerCase().replace(" ", "_")
+            ? String(data.source).toLowerCase().replace(" ", "_")
             : "direct_website";
 
         // 3. Find or Create the Customer
@@ -44,7 +50,9 @@ export const createSellRequest = async (req, res) => {
                 email: data.email || null,
                 city: data.city || null,
                 state: data.state || null,
-                source: ["direct_website", "organic", "manual", "walk_in"].includes(customerSource)
+                source: ["direct_website", "organic", "manual", "walk_in"].includes(
+                    customerSource
+                )
                     ? customerSource
                     : "other",
                 interestedIn: "sell",
@@ -57,23 +65,39 @@ export const createSellRequest = async (req, res) => {
             await customer.save();
         }
 
-        // 4. Build SellRequest payload
-        //    - destructure `name` out so it doesn't leak into SellRequest
-        //    - map `name` -> `sellerName` (required by schema)
-        const { name, ...rest } = data;
+        // 4. Upload photos to Cloudinary (if any)
+        //    `req.files` is populated by multer.array("photos", N)
+        let photoUrls = [];
+        if (req.files && req.files.length > 0) {
+            // Guard: max 10 photos
+            if (req.files.length > 10) {
+                return res.status(400).json({
+                    success: false,
+                    message: "You can upload a maximum of 10 photos.",
+                });
+            }
 
+            const results = await uploadMultipleToCloudinary(req.files);
+            // uploadMultipleToCloudinary returns [{ url, public_id }, ...]
+            photoUrls = results.map((r) => r.url);
+            results.forEach((r) => uploadedPublicIds.push(r.public_id));
+        }
+
+        // 5. Build SellRequest payload
+        const { name, photos, ...rest } = data; // drop any client-sent URLs too
         const sellRequestPayload = {
             ...rest,
-            sellerName: name,           // ⬅️ KEY MAPPING
-            customer: customer._id,     // assumes you add `customer` field to model (see below)
+            sellerName: name,                             // name -> sellerName
+            customer: customer._id,
             source: ["Website", "Admin", "Walk-in", "Referral"].includes(data.source)
                 ? data.source
-                : "Website",            // keep SellRequest enum valid
+                : "Website",
+            photos: photoUrls,                            // ⬅️ uploaded URLs
         };
 
         const newRequest = await SellRequest.create(sellRequestPayload);
 
-        res.status(201).json({
+        return res.status(201).json({
             success: true,
             message: "Sell request submitted successfully",
             data: newRequest,
@@ -82,7 +106,15 @@ export const createSellRequest = async (req, res) => {
     } catch (error) {
         console.error("Create Sell Request Error:", error);
 
-        // Friendlier duplicate-key error
+        // Rollback: delete the files we just uploaded, so Cloudinary isn't polluted
+        if (uploadedPublicIds.length > 0) {
+            try {
+                await deleteMultipleFromCloudinary(uploadedPublicIds, "image");
+            } catch (cleanupErr) {
+                console.error("Cloudinary cleanup failed:", cleanupErr);
+            }
+        }
+
         if (error.code === 11000) {
             const field = Object.keys(error.keyPattern || {})[0] || "field";
             return res.status(409).json({
@@ -91,7 +123,7 @@ export const createSellRequest = async (req, res) => {
             });
         }
 
-        res.status(400).json({ success: false, message: error.message });
+        return res.status(400).json({ success: false, message: error.message });
     }
 };
 
