@@ -31,6 +31,7 @@ const allowedOrigins = [
   "https://shivaye-luxury-cars-crm.vercel.app",
   "https://shivaye-luxury-cars-frontend.vercel.app",
   "https://shivaye-luxury-cars-crm.onrender.com",
+  "https://shivaye-frontend-lovat.vercel.app",
   '*'
 ];
 
