@@ -13,6 +13,7 @@ import {
     getCampaignPerformance,
 } from "../controllers/campaign.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
+import { upload } from "../middleware/upload.middleware.js";
 
 const router = Router();
 
@@ -47,6 +48,7 @@ router.post(
     "/",
     verifyJWT,
     restrictTo("admin", "marketing_manager"),
+    upload.single("bannerImage"),
     createCampaign
 );
 
@@ -61,6 +63,7 @@ router.patch(
     "/:id",
     verifyJWT,
     restrictTo("admin", "marketing_manager"),
+    upload.single("bannerImage"),
     updateCampaign
 );
 

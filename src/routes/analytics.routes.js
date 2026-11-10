@@ -4,7 +4,7 @@ import {
     getSalesAnalytics,
     getLeadAnalytics,
     getSourceAnalytics,
-    getLocationAnalytics,
+    getMarketingOverview,
     getInventoryAnalytics,
     getSalesFunnel,
     getKmBandAnalytics,
@@ -14,6 +14,7 @@ import {
     getCampaignAnalytics,
     getFollowUpAnalytics,
     getDashboardData,
+    getLocationAnalytics
 } from "../controllers/analytics.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 
@@ -77,6 +78,12 @@ router.get(
     "/locations",
     restrictTo("admin", "sales_manager", "marketing_manager"),
     getLocationAnalytics
+);
+
+router.get(
+    "/marketing",
+    restrictTo("admin", "sales_manager", "marketing_manager"),
+    getMarketingOverview
 );
 
 router.get(

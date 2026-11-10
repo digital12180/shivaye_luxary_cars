@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 
 const campaignSchema = new mongoose.Schema(
   {
+    // Matches "Campaign name" input
     name: { type: String, required: true, trim: true },
 
     slug: {
@@ -12,10 +13,11 @@ const campaignSchema = new mongoose.Schema(
       index: true,
     },
 
+    // Not in form but required by existing logic, set defaults
     source: {
       type: String,
-      enum: ["google_ads", "facebook_ads", "instagram", "organic", "other"],
-      required: true,
+      enum: ["google_ads", "facebook_ads", "instagram", "organic", "other", "internal"],
+      default: "internal",
       index: true,
     },
 
@@ -26,54 +28,41 @@ const campaignSchema = new mongoose.Schema(
       index: true,
     },
 
+    // UPDATED: Matches screenshot dropdown ["Draft", "Active", "Paused", "Ended"]
     status: {
       type: String,
-      enum: ["draft", "scheduled", "live", "paused", "ended"],
-      default: "draft",
+      enum: ["Draft", "Active", "Paused", "Ended"],
+      default: "Draft",
       index: true,
     },
-    platformCampaignId: { type: String, default: null, trim: true },
-    utm: {
-      source: { type: String, default: null, trim: true },
-      medium: { type: String, default: null, trim: true },
-      campaign: { type: String, default: null, trim: true },
-      term: { type: String, default: null, trim: true },
-      content: { type: String, default: null, trim: true },
-    },
 
-
-    title: { type: String, trim: true },
+    // Matches "Headline" input
+    title: { type: String, trim: true }, // Used as Headline
+    
+    // Matches "Message" textarea
     description: { type: String, trim: true },
+
+    // Matches "Banner image" upload
     bannerImage: { type: String, default: null },
+    
     landingPageUrl: { type: String, default: null, trim: true },
 
-    // Festive template (BRD 28.1, 36)
-    festive: {
-      offerTitle: { type: String, trim: true },
-      offerMessage: { type: String, trim: true },
-      validityText: { type: String, trim: true },
-      ctaText: { type: String, default: "View Cars", trim: true },
-      benefit: { type: String, trim: true },
-      badgeText: { type: String, trim: true },
-    },
+    // Matches "Discount amount"
+    discountAmount: { type: Number, default: 0, min: 0 },
 
-    // Selected vehicles for this campaign (BRD 28.2)
-    selectedVehicles: [{ type: mongoose.Schema.Types.ObjectId, ref: "Vehicle" }],
+    // Matches "Call to action"
+    ctaText: { type: String, default: "Book a test drive", trim: true },
 
-    // Offer (optional — used by festive campaigns)
-    offerPrice: { type: Number, default: null, min: 0 },
-    benefit: { type: String, default: null, trim: true },
-    ctaText: { type: String, default: "View Cars", trim: true },
+    // Matches "Goodies" input (Free car cover, 1-year insurance)
+    goodies: [{ type: String, trim: true }],
 
-    // Schedule
+    // Matches "Start date" and "End date"
     startDate: { type: Date, required: true, index: true },
     endDate: { type: Date, required: true, index: true },
 
-    // Budget / spend (for ROI reporting — BRD 15)
+    // Existing metrics
     budget: { type: Number, default: null, min: 0 },
     spend: { type: Number, default: 0, min: 0 },
-
-    // Denormalized metrics (updated by triggers/aggregations)
     metrics: {
       totalLeads: { type: Number, default: 0 },
       qualifiedLeads: { type: Number, default: 0 },
@@ -97,11 +86,6 @@ const campaignSchema = new mongoose.Schema(
 
 // Compound indexes
 campaignSchema.index({ status: 1, startDate: 1, endDate: 1 });
-campaignSchema.index({ source: 1, type: 1 });
-campaignSchema.index({ "utm.campaign": 1 });
-
-// Text search
-campaignSchema.index({ name: "text", title: "text", description: "text" });
 
 // Soft delete
 campaignSchema.pre(/^find/, function () {

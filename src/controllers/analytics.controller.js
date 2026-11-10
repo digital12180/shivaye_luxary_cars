@@ -8,6 +8,7 @@ import Appointment from "../models/Appointment.js";
 import Customer from "../models/Customer.js";
 import Campaign from "../models/Campaign.js";
 import { ok } from "../utils/response.js";
+import mongoose from "mongoose";
 
 const parseRange = (req) => {
     const { fromDate, toDate } = req.query;
@@ -586,51 +587,6 @@ export const getSourceAnalytics = async (req, res, next) => {
     }
 };
 
-export const getLocationAnalytics = async (req, res, next) => {
-    try {
-        const scopeDate = parseRange(req);
-
-        const [byCity, byState, byCountry, leadCityVsSalesCity] = await Promise.all([
-            Lead.aggregate([
-                { $match: { ...scopeDate, "location.city": { $ne: null } } },
-                {
-                    $group: {
-                        _id: "$location.city",
-                        leads: { $sum: 1 },
-                        wonLeads: { $sum: { $cond: [{ $eq: ["$status", "won"] }, 1, 0] } },
-                    },
-                },
-                { $sort: { leads: -1 } },
-                { $limit: 20 },
-            ]),
-
-            Lead.aggregate([
-                { $match: { ...scopeDate, "location.state": { $ne: null } } },
-                { $group: { _id: "$location.state", leads: { $sum: 1 } } },
-                { $sort: { leads: -1 } },
-            ]),
-
-            Lead.aggregate([
-                { $match: { ...scopeDate, "location.country": { $ne: null } } },
-                { $group: { _id: "$location.country", leads: { $sum: 1 } } },
-                { $sort: { leads: -1 } },
-            ]),
-
-            Customer.aggregate([
-                { $match: { ...scopeDate, "ipLocation.city": { $ne: null } } },
-                { $group: { _id: "$ipLocation.city", count: { $sum: 1 } } },
-                { $sort: { count: -1 } },
-                { $limit: 20 },
-            ]),
-        ]);
-
-        return ok(res, { byCity, byState, byCountry, byIpCity: leadCityVsSalesCity });
-    } catch (err) {
-        next(err);
-    }
-};
-
-
 export const getInventoryAnalytics = async (req, res, next) => {
     try {
         const [byStatus, byBrand, byCity, ageing, valueByStatus] = await Promise.all([
@@ -1101,6 +1057,202 @@ export const getFollowUpAnalytics = async (req, res, next) => {
             asOf: now,
         });
     } catch (err) {
+        next(err);
+    }
+};
+
+const SOURCE_LABELS = {
+    google_ads: "Google Ads",
+    facebook_ads: "Facebook Ads",
+    instagram: "Instagram",
+    organic: "Organic",
+    direct_website: "Website",
+    whatsapp: "WhatsApp",
+    phone: "Phone",
+    walk_in: "Walk-in",
+    referral: "Referral",
+    manual: "Manual",
+    other: "Other",
+};
+
+const getDateFilter = (query) => {
+    const { from, to } = query;
+    const filter = {};
+    if (from || to) {
+        filter.createdAt = {};
+        if (from) filter.createdAt.$gte = new Date(from);
+        if (to) filter.createdAt.$lte = new Date(to);
+    }
+    return filter;
+};
+
+export const getMarketingOverview = async (req, res, next) => {
+    try {
+        const dateFilter = getDateFilter(req.query);
+
+        // ---------- 1. Enquiry Source Mix ----------
+        const sourceMixRaw = await Lead.aggregate([
+            { $match: { ...dateFilter, deletedAt: null } },
+            {
+                $group: {
+                    _id: "$source",
+                    count: { $sum: 1 },
+                },
+            },
+            { $sort: { count: -1 } },
+        ]);
+
+        const enquirySourceMix = sourceMixRaw.map((item) => ({
+            source: item._id || "other",
+            label: SOURCE_LABELS[item._id] || "Other",
+            count: item.count,
+        }));
+
+        const totalLeads = enquirySourceMix.reduce((sum, s) => sum + s.count, 0);
+
+        // ---------- 2. Campaign Performance ----------
+        // Get all campaigns + their lead count (attributed)
+        const campaignPerfRaw = await Lead.aggregate([
+            {
+                $match: {
+                    ...dateFilter,
+                    campaign: { $ne: null },
+                    deletedAt: null,
+                },
+            },
+            {
+                $group: {
+                    _id: "$campaign",
+                    attributedLeads: { $sum: 1 },
+                },
+            },
+            {
+                $lookup: {
+                    from: "campaigns",
+                    localField: "_id",
+                    foreignField: "_id",
+                    as: "campaignDoc",
+                },
+            },
+            { $unwind: "$campaignDoc" },
+            {
+                $project: {
+                    _id: 0,
+                    campaignId: "$_id",
+                    name: "$campaignDoc.name",
+                    status: "$campaignDoc.status",
+                    attributedLeads: 1,
+                },
+            },
+            { $sort: { attributedLeads: -1 } },
+        ]);
+
+        // Also include campaigns with 0 leads (screenshot shows "The Weekend Edit" with 0)
+        const allCampaigns = await Campaign.find({ deletedAt: null })
+            .select("_id name status")
+            .lean();
+
+        const campaignPerformance = allCampaigns.map((c) => {
+            const found = campaignPerfRaw.find(
+                (p) => p.campaignId.toString() === c._id.toString()
+            );
+            return {
+                campaignId: c._id,
+                campaign: c.name,
+                status: c.status || "Draft", // Active / Draft / Paused
+                attributedLeads: found ? found.attributedLeads : 0,
+            };
+        }).sort((a, b) => b.attributedLeads - a.attributedLeads);
+
+        // ---------- Response ----------
+        return ok(res, {
+            totalLeads,
+            enquirySourceMix,
+            campaignPerformance,
+        }, "Marketing overview fetched", 200);
+    } catch (err) {
+        console.error("Error in getMarketingOverview:", err);
+        next(err);
+    }
+};
+
+export const getLocationAnalytics = async (req, res, next) => {
+    try {
+        const dateFilter = getDateFilter(req.query);
+
+        // ---------- 1. Enquiries by customer city ----------
+        // Priority: Lead.location.city > Customer.city
+        const cityAgg = await Lead.aggregate([
+            { $match: { ...dateFilter, deletedAt: null } },
+            {
+                $lookup: {
+                    from: "customers",
+                    localField: "customer",
+                    foreignField: "_id",
+                    as: "customerDoc",
+                },
+            },
+            { $unwind: { path: "$customerDoc", preserveNullAndEmptyArrays: true } },
+            {
+                $project: {
+                    resolvedCity: {
+                        $ifNull: [
+                            "$location.city",
+                            { $ifNull: ["$city", "$customerDoc.city"] },
+                        ],
+                    },
+                },
+            },
+            { $match: { resolvedCity: { $ne: null, $ne: "" } } },
+            {
+                $group: {
+                    _id: "$resolvedCity",
+                    count: { $sum: 1 },
+                },
+            },
+            { $sort: { count: -1 } },
+            { $limit: 20 },
+        ]);
+
+        const enquiriesByCity = cityAgg.map((item) => ({
+            city: item._id,
+            count: item.count,
+        }));
+
+        // ---------- 2. Regional Snapshot (Delhi NCR) ----------
+        const NCR_CITIES = [
+            "New Delhi", "Delhi", "Gurugram", "Gurgaon",
+            "Noida", "Greater Noida", "South Delhi", "Faridabad",
+            "Ghaziabad",
+        ];
+
+        // NCR enquiries from this period
+        const ncrEnquiries = enquiriesByCity
+            .filter((c) => NCR_CITIES.some((n) => c.city?.toLowerCase() === n.toLowerCase()))
+            .reduce((sum, c) => sum + c.count, 0);
+
+        // Total customer profiles in NCR (all time, from Customer collection)
+        const ncrCustomerProfiles = await mongoose.model("Customer").countDocuments({
+            $or: [
+                { city: { $in: NCR_CITIES.map((c) => new RegExp(`^${c}$`, "i")) } },
+                { "ipLocation.city": { $in: NCR_CITIES.map((c) => new RegExp(`^${c}$`, "i")) } },
+            ],
+        });
+
+        const regionalSnapshot = {
+            region: "Delhi NCR",
+            description: "Interest spans New Delhi, Gurugram, Noida and surrounding areas.",
+            customerProfiles: ncrCustomerProfiles,
+            ncrEnquiries,
+        };
+
+        // ---------- Response ----------
+        return ok(res, {
+            enquiriesByCity,
+            regionalSnapshot,
+        }, "Location analytics fetched", 200);
+    } catch (err) {
+        console.error("Error in getLocationAnalytics:", err);
         next(err);
     }
 };

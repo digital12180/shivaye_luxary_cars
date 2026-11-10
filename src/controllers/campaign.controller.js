@@ -1,16 +1,16 @@
 import Campaign from "../models/Campaign.js";
 import Lead from "../models/Lead.js";
 import { ok, fail } from "../utils/response.js";
+import { uploadToCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js";
 
-/* ================= PUBLIC ================= */
-
-// GET /api/v1/campaigns/public/active  (festive landing page — BRD 28.1)
+// GET /api/v1/campaigns/public/active
 export const getActiveCampaigns = async (req, res, next) => {
     try {
         const now = new Date();
+        // Updated to look for "Active" status
         const campaigns = await Campaign.find({
             isActive: true,
-            status: "live",
+            status: "Active",
             startDate: { $lte: now },
             endDate: { $gte: now },
         })
@@ -24,13 +24,13 @@ export const getActiveCampaigns = async (req, res, next) => {
     }
 };
 
-// GET /api/v1/campaigns/public/:slug  (festive landing page detail)
+// GET /api/v1/campaigns/public/:slug
 export const getPublicCampaign = async (req, res, next) => {
     try {
         const campaign = await Campaign.findOne({
             slug: req.params.slug,
             isActive: true,
-            status: "live",
+            status: "Active",
         }).populate(
             "selectedVehicles",
             "brand model year price images slug status location kilometers"
@@ -50,27 +50,32 @@ export const listCampaigns = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
-        const { status, source, type, isActive, search } = req.query;
+        const { status, search } = req.query;
 
         const filter = {};
-        if (status) filter.status = status;
-        if (source) filter.source = source;
-        if (type) filter.type = type;
-        if (isActive !== undefined) filter.isActive = isActive === "true";
 
+        // Updated Status Filter (Matches UI Dropdown)
+        if (status && status !== "All statuses") {
+            filter.status = status;
+        }
+
+        // Updated Search Filter (Matches UI "Search campaigns...")
         if (search) {
             filter.$or = [
                 { name: new RegExp(search, "i") },
                 { title: new RegExp(search, "i") },
-                { "utm.campaign": new RegExp(search, "i") },
             ];
         }
+
+        // Sorting: Default "Most recent"
+        let sortOption = { createdAt: -1 };
+        // if (req.query.sort === 'oldest') sortOption = { createdAt: 1 };
 
         const [data, total] = await Promise.all([
             Campaign.find(filter)
                 .populate("createdBy", "name")
                 .populate("updatedBy", "name")
-                .sort("-createdAt")
+                .sort(sortOption)
                 .skip((page - 1) * limit)
                 .limit(limit),
             Campaign.countDocuments(filter),
@@ -100,14 +105,43 @@ export const getCampaign = async (req, res, next) => {
     }
 };
 
+/* ================= CRM ================= */
+
 // POST /api/v1/campaigns
 export const createCampaign = async (req, res, next) => {
     try {
-        const campaign = await Campaign.create({
+        let bannerImageUrl = null;
+
+        // 1. Check if a file was uploaded via multer
+        if (req.file) {
+            // Upload buffer to Cloudinary
+            const uploadResult = await uploadToCloudinary(
+                req.file.buffer,
+                "image", // force image resource type
+                `campaign-banner-${Date.now()}` // optional custom public_id
+            );
+            bannerImageUrl = uploadResult.url;
+        }
+
+        // 2. Prepare campaign data
+        const campaignData = {
             ...req.body,
-            createdBy: req.user._id,
+            // If a file was uploaded, override the bannerImage field from body
+            ...(bannerImageUrl && { bannerImage: bannerImageUrl }),
+            status: req.body.status || "Draft",
+            createdBy: req.user._id, // Assuming req.user is set by auth middleware
             updatedBy: req.user._id,
-        });
+        };
+
+        // Note: If you are sending 'goodies' as a JSON string from FormData, you might need to parse it:
+        // if (typeof campaignData.goodies === 'string') {
+        //     campaignData.goodies = JSON.parse(campaignData.goodies);
+        // }
+
+        // Automatically set isActive based on status
+        campaignData.isActive = campaignData.status === "Active";
+
+        const campaign = await Campaign.create(campaignData);
         return ok(res, campaign, "Campaign created", 201);
     } catch (err) {
         next(err);
@@ -117,34 +151,81 @@ export const createCampaign = async (req, res, next) => {
 // PATCH /api/v1/campaigns/:id
 export const updateCampaign = async (req, res, next) => {
     try {
-        const protectedFields = ["metrics", "spend", "slug", "createdBy", "deletedAt"];
-        protectedFields.forEach((f) => delete req.body[f]);
-
-        const campaign = await Campaign.findByIdAndUpdate(
-            req.params.id,
-            { ...req.body, updatedBy: req.user._id },
-            { new: true, runValidators: true }
-        );
+        const campaign = await Campaign.findById(req.params.id);
         if (!campaign) return fail(res, "Campaign not found", 404);
 
-        return ok(res, campaign, "Campaign updated");
+        let updateData = { ...req.body, updatedBy: req.user._id };
+
+        // Protect certain fields from being updated via req.body
+        const protectedFields = ["metrics", "spend", "slug", "createdBy", "deletedAt", "status"];
+        protectedFields.forEach((f) => delete updateData[f]);
+
+        if (req.file) {
+            // Upload new image
+            const uploadResult = await uploadToCloudinary(
+                req.file.buffer,
+                "image",
+                `campaign-banner-${Date.now()}`
+            );
+            updateData.bannerImage = uploadResult.url;
+
+            // 2. Delete old image from Cloudinary
+            if (campaign.bannerImage) {
+                try {
+                    // Extract public_id from the URL
+                    // Splits the URL by '/upload/', takes the second part, removes the version (v123...), and removes the file extension
+                    const urlParts = campaign.bannerImage.split('/upload/');
+                    if (urlParts.length === 2) {
+                        // Result: "v1234567890/nosecret/campaign-banner-12345.jpg"
+                        const pathWithVersion = urlParts[1];
+                        // Remove version and extension
+                        const publicId = pathWithVersion
+                            .replace(/^v\d+\//, '') // removes "v1234567890/"
+                            .replace(/\.[^/.]+$/, ""); // removes ".jpg"
+
+                        // publicId is now "nosecret/campaign-banner-12345"
+                        await deleteFromCloudinary(publicId, "image");
+                    }
+                } catch (deleteError) {
+                    // Log the error but don't stop the update process if deletion fails
+                    console.error("Failed to delete old banner from Cloudinary:", deleteError);
+                }
+            }
+        }
+
+        // Note: Parse goodies if sent as string via FormData
+        // if (updateData.goodies && typeof updateData.goodies === 'string') {
+        //     updateData.goodies = JSON.parse(updateData.goodies);
+        // }
+
+        const updatedCampaign = await Campaign.findByIdAndUpdate(
+            req.params.id,
+            updateData,
+            { new: true, runValidators: true }
+        );
+
+        return ok(res, updatedCampaign, "Campaign updated");
     } catch (err) {
         next(err);
     }
 };
 
-// PATCH /api/v1/campaigns/:id/status  (BRD 28.2 activate/deactivate)
+// ... rest of your controllers (updateCampaignStatus, listCampaigns, etc.)
+
+// PATCH /api/v1/campaigns/:id/status
 export const updateCampaignStatus = async (req, res, next) => {
     try {
         const { status } = req.body;
-        const allowed = ["draft", "scheduled", "live", "paused", "ended"];
+        // Updated allowed statuses
+        const allowed = ["Draft", "Active", "Paused", "Ended"];
         if (!allowed.includes(status)) return fail(res, "Invalid status", 400);
 
         const campaign = await Campaign.findByIdAndUpdate(
             req.params.id,
             {
                 status,
-                isActive: status === "live" || status === "scheduled",
+                // isActive is true only if status is Active
+                isActive: status === "Active",
                 updatedBy: req.user._id,
             },
             { new: true }
@@ -157,7 +238,7 @@ export const updateCampaignStatus = async (req, res, next) => {
     }
 };
 
-// PATCH /api/v1/campaigns/:id/vehicles  (BRD 28.2 select inventory for offer)
+// PATCH /api/v1/campaigns/:id/vehicles
 export const updateSelectedVehicles = async (req, res, next) => {
     try {
         const { vehicleIds } = req.body;
@@ -192,7 +273,7 @@ export const deleteCampaign = async (req, res, next) => {
     }
 };
 
-/* ================= ANALYTICS (BRD 15, 34.4) ================= */
+/* ================= ANALYTICS ================= */
 
 // GET /api/v1/campaigns/stats/summary
 export const getCampaignStats = async (req, res, next) => {
@@ -200,9 +281,10 @@ export const getCampaignStats = async (req, res, next) => {
         const [total, live, scheduled, ended, totalSpend, totalRevenue] =
             await Promise.all([
                 Campaign.countDocuments(),
-                Campaign.countDocuments({ status: "live" }),
-                Campaign.countDocuments({ status: "scheduled" }),
-                Campaign.countDocuments({ status: "ended" }),
+                // Updated counts based on new statuses
+                Campaign.countDocuments({ status: "Active" }),
+                Campaign.countDocuments({ status: "Draft" }), // Map "Scheduled" to Draft for now or add Scheduled status
+                Campaign.countDocuments({ status: "Ended" }),
                 Campaign.aggregate([
                     { $group: { _id: null, sum: { $sum: "$spend" } } },
                 ]),
@@ -217,7 +299,7 @@ export const getCampaignStats = async (req, res, next) => {
         return ok(res, {
             total,
             live,
-            scheduled,
+            scheduled, // Keeping key name same for frontend compatibility if needed
             ended,
             totalSpend: spend,
             totalRevenue: revenue,
@@ -228,13 +310,12 @@ export const getCampaignStats = async (req, res, next) => {
     }
 };
 
-// GET /api/v1/campaigns/:id/performance  (BRD 15 campaign report)
+// GET /api/v1/campaigns/:id/performance
 export const getCampaignPerformance = async (req, res, next) => {
     try {
         const campaign = await Campaign.findById(req.params.id);
         if (!campaign) return fail(res, "Campaign not found", 404);
 
-        // Live aggregate from Lead collection
         const leadFilter = { campaign: campaign._id };
         const [totalLeads, qualifiedLeads, wonLeads, lostLeads, revenueAgg] =
             await Promise.all([
@@ -263,7 +344,6 @@ export const getCampaignPerformance = async (req, res, next) => {
         const cpl = totalLeads ? Number((campaign.spend / totalLeads).toFixed(2)) : 0;
         const roas = campaign.spend ? Number((revenue / campaign.spend).toFixed(2)) : 0;
 
-        // Optional: sync metrics back onto the campaign (denormalized cache)
         await Campaign.updateOne(
             { _id: campaign._id },
             {
