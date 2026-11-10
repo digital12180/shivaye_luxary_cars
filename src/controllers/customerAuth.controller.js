@@ -19,12 +19,6 @@ const cookieOpts = {
     sameSite: "strict",
 };
 
-/* ============================================================
-   POST /api/v1/customer-auth/send-otp
-   Body: { phone, name?, source?, attribution? }
-   - If customer exists → send OTP
-   - If not → create customer record + send OTP (silent registration)
-   ============================================================ */
 export const sendOtp = async (req, res, next) => {
     try {
         const { ip, location } = await captureLocation(req);

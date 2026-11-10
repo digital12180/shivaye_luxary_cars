@@ -24,7 +24,6 @@ export const getActiveCampaigns = async (req, res, next) => {
     }
 };
 
-// GET /api/v1/campaigns/public/:slug
 export const getPublicCampaign = async (req, res, next) => {
     try {
         const campaign = await Campaign.findOne({
@@ -45,7 +44,7 @@ export const getPublicCampaign = async (req, res, next) => {
 
 /* ================= CRM ================= */
 
-// GET /api/v1/campaigns
+
 export const listCampaigns = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
@@ -90,7 +89,6 @@ export const listCampaigns = async (req, res, next) => {
     }
 };
 
-// GET /api/v1/campaigns/:id
 export const getCampaign = async (req, res, next) => {
     try {
         const campaign = await Campaign.findById(req.params.id)
@@ -210,7 +208,6 @@ export const updateCampaign = async (req, res, next) => {
     }
 };
 
-// ... rest of your controllers (updateCampaignStatus, listCampaigns, etc.)
 
 // PATCH /api/v1/campaigns/:id/status
 export const updateCampaignStatus = async (req, res, next) => {

@@ -6,10 +6,6 @@ import LeadActivity from "../models/leadActivity.js";
 import { ok, fail } from "../utils/response.js";
 import { sendNotification } from "../services/notification.service.js";
 
-/* ============================================================
-   PUBLIC — Create appointment (finds/creates a Lead)
-   POST /api/v1/appointments/public
-   ============================================================ */
 export const publicCreateAppointment = async (req, res, next) => {
     try {
         const {
@@ -121,10 +117,7 @@ export const publicCreateAppointment = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   CRM — List appointments
-   GET /api/v1/appointments
-   ============================================================ */
+
 export const listAppointments = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
@@ -190,10 +183,7 @@ export const listAppointments = async (req, res, next) => {
     }
 };
 
-/* ============================================================
-   CRM — Get single appointment
-   GET /api/v1/appointments/:id
-   ============================================================ */
+
 export const getAppointment = async (req, res, next) => {
     try {
         const appointment = await Appointment.findById(req.params.id)
