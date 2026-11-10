@@ -93,4 +93,10 @@ export const PERMISSIONS = {
     USERS_CREATE: "Users_create",
     USERS_UPDATE: "Users_update",
     USERS_DELETE: "Users_delete",
+
+    // Sell request
+    SELL_READ: "Sell_read",
+    SELL_CREATE: "Sell_create",
+    SELL_UPDATE: "Sell_update",
+    SELL_DELETE: "Sell_delete",
 };
