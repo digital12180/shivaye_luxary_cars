@@ -7,23 +7,22 @@ import { uploadToCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js
 export const getActiveCampaigns = async (req, res, next) => {
     try {
         const now = new Date();
-        // Updated to look for "Active" status
+
+        // Sirf Active campaigns fetch karne ke liye
         const campaigns = await Campaign.find({
             isActive: true,
             status: "Active",
-            startDate: { $lte: now },
-            endDate: { $gte: now },
+            startDate: { $lte: now }, // Start date aaj ya usse pehle ki ho
+            endDate: { $gte: now },   // End date aaj ya uske baad ki ho
         })
-            .populate("selectedVehicles", "brand model year price images slug status")
-            .sort("-startDate")
-            .select("-metrics -spend -budget -createdBy -updatedBy");
+            .sort("-startDate") // Latest start date wale pehle aayenge
+            .select("-metrics -spend -budget -createdBy -updatedBy"); // Unwanted fields hide kiye
 
         return ok(res, campaigns);
     } catch (err) {
         next(err);
     }
 };
-
 export const getPublicCampaign = async (req, res, next) => {
     try {
         const campaign = await Campaign.findOne({
@@ -53,12 +52,12 @@ export const listCampaigns = async (req, res, next) => {
 
         const filter = {};
 
-        // Updated Status Filter (Matches UI Dropdown)
+        // Status Filter
         if (status && status !== "All statuses") {
             filter.status = status;
         }
 
-        // Updated Search Filter (Matches UI "Search campaigns...")
+        // Search Filter
         if (search) {
             filter.$or = [
                 { name: new RegExp(search, "i") },
@@ -66,9 +65,9 @@ export const listCampaigns = async (req, res, next) => {
             ];
         }
 
-        // Sorting: Default "Most recent"
-        let sortOption = { createdAt: -1 };
-        // if (req.query.sort === 'oldest') sortOption = { createdAt: 1 };
+        // UPDATED: Sort by startDate (Ascending: 1)
+        // Isse October wali campaign pehle aayegi, phir November wali
+        let sortOption = { startDate: 1 };
 
         const [data, total] = await Promise.all([
             Campaign.find(filter)
