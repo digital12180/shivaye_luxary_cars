@@ -140,6 +140,10 @@ export const getAllSellRequests = async (req, res) => {
 
         const query = {};
 
+        // 🔥 FIX: Soft delete filter explicitly add karein
+        // Taaki countDocuments aur find() dono exact same records par kaam karein
+        query.deletedAt = null;
+
         if (status && status !== "All Statuses") query.status = status;
 
         if (search) {
@@ -158,13 +162,19 @@ export const getAllSellRequests = async (req, res) => {
                 .sort({ createdAt: -1 })
                 .skip((page - 1) * limit)
                 .limit(limit),
+            
+            // Count ab exactly same query par hoga
             SellRequest.countDocuments(query),
         ]);
 
         res.status(200).json({
             success: true,
             data: requests,
-            pagination: { total, page, pages: Math.ceil(total / limit) },
+            pagination: { 
+                total, 
+                page, 
+                pages: Math.ceil(total / limit) 
+            },
         });
     } catch (error) {
         console.error("Get Sell Requests Error:", error);
