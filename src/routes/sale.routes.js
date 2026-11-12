@@ -11,6 +11,7 @@ import {
     deleteSale,
     getSalesDashboard,
     getMonthlySalesTrend,
+    getSalesReport,
 } from "../controllers/sale.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 
@@ -30,6 +31,7 @@ router.get(
     restrictTo("admin", "sales_manager", "sales_executive"),
     getMonthlySalesTrend
 );
+router.get("/sales-report", restrictTo("admin"), getSalesReport);
 
 /* ============ CRUD ============ */
 router.get(
@@ -89,5 +91,7 @@ router.delete(
     restrictTo("admin"),
     deleteSale
 );
+
+
 
 export default router;

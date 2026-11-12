@@ -614,3 +614,93 @@ export const getMonthlySalesTrend = async (req, res, next) => {
         next(err);
     }
 };
+
+
+// GET /api/v1/reports/sales
+export const getSalesReport = async (req, res, next) => {
+    try {
+        /* ==========================================
+           1. PERFORMANCE SNAPSHOT (Top 4 Cards)
+           ========================================== */
+        
+        // Vehicles in Collection
+        const [totalVehicles, availableVehicles, reservedVehicles] = await Promise.all([
+            Vehicle.countDocuments(),
+            Vehicle.countDocuments({ status: "Available" }),
+            Vehicle.countDocuments({ status: "Reserved" }),
+        ]);
+
+        // Lead Pipeline
+        const [totalLeads, openLeads] = await Promise.all([
+            Lead.countDocuments(),
+            Lead.countDocuments({ status: { $nin: ["Won", "Lost"] } }), // Open opportunities
+        ]);
+
+        // Sales Closed & Revenue Booked
+        const salesStats = await Sale.aggregate([
+            {
+                $group: {
+                    _id: null,
+                    totalSales: { $sum: 1 },
+                    totalRevenue: { $sum: "$pricing.finalSalePrice" },
+                },
+            },
+        ]);
+
+        const salesClosed = salesStats[0]?.totalSales || 0;
+        const revenueBooked = salesStats[0]?.totalRevenue || 0;
+
+        // Calculate Lead-to-Sale percentage
+        const leadToSalePercent = totalLeads > 0 
+            ? ((salesClosed / totalLeads) * 100).toFixed(1) 
+            : 0;
+
+        /* ==========================================
+           2. SALES HISTORY TABLE (Right Side)
+           ========================================== */
+        
+        // Fetch recent sales, populate the vehicle and customer (buyer)
+        const recentSales = await Sale.find()
+            .sort({ saleDate: -1 })
+            .limit(10) // Limit to recent 10 for the table
+            .populate("vehicle", "brand model") // Assuming vehicle has these fields
+            .populate("customer", "name") // Assuming customer has name
+            .select("vehicleSnapshot buyerSnapshot pricing saleDate");
+
+        // Format the history data to match the screenshot exactly
+        const salesHistory = recentSales.map((sale) => ({
+            vehicle: `${sale.vehicleSnapshot?.brand || ""} ${sale.vehicleSnapshot?.model || ""}`.trim() || "Unknown Vehicle",
+            buyer: sale.buyerSnapshot?.name || "Unknown Buyer",
+            saleValue: sale.pricing?.finalSalePrice || 0,
+            date: sale.saleDate,
+        }));
+
+        /* ==========================================
+           3. RETURN RESPONSE
+           ========================================== */
+        return ok(res, {
+            performanceSnapshot: {
+                vehiclesInCollection: {
+                    total: totalVehicles,
+                    available: availableVehicles,
+                    reserved: reservedVehicles,
+                },
+                leadPipeline: {
+                    total: totalLeads,
+                    openOpportunities: openLeads,
+                },
+                salesClosed: {
+                    total: salesClosed,
+                    leadToSalePercent: `${leadToSalePercent}%`,
+                },
+                revenueBooked: {
+                    total: revenueBooked,
+                },
+            },
+            salesHistory: salesHistory,
+        });
+
+    } catch (err) {
+        next(err);
+    }
+};

@@ -38,13 +38,13 @@ const campaignSchema = new mongoose.Schema(
 
     // Matches "Headline" input
     title: { type: String, trim: true }, // Used as Headline
-    
+
     // Matches "Message" textarea
     description: { type: String, trim: true },
 
     // Matches "Banner image" upload
     bannerImage: { type: String, default: null },
-    
+
     landingPageUrl: { type: String, default: null, trim: true },
 
     // Matches "Discount amount"
@@ -56,6 +56,9 @@ const campaignSchema = new mongoose.Schema(
     // Matches "Goodies" input (Free car cover, 1-year insurance)
     goodies: [{ type: String, trim: true }],
 
+
+    // 👇 ADD THIS LINE 👇
+    selectedVehicles: [{ type: mongoose.Schema.Types.ObjectId, ref: "Vehicle" }],
     // Matches "Start date" and "End date"
     startDate: { type: Date, required: true, index: true },
     endDate: { type: Date, required: true, index: true },
