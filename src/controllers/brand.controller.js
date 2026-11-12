@@ -12,6 +12,10 @@ export const listBrands = async (req, res, next) => {
 
         const filter = {};
 
+        // 🔥 FIX: Soft delete filter explicitly add karein
+        // Taaki countDocuments aur find() dono exact same records par kaam karein
+        filter.deletedAt = null;
+
         if (tier) filter.tier = tier;
         if (featured === "true") filter.isFeatured = true;
 
@@ -32,12 +36,19 @@ export const listBrands = async (req, res, next) => {
                 .sort(sortBy)
                 .skip((page - 1) * limit)
                 .limit(limit),
+
+            // Count ab exactly same filter par hoga
             Brand.countDocuments(filter),
         ]);
 
         return ok(res, {
             data,
-            pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit)
+            },
         });
     } catch (err) {
         next(err);
