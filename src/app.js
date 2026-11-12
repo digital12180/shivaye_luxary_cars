@@ -34,6 +34,7 @@ const allowedOrigins = [
   "https://shivaye-frontend-lovat.vercel.app",
   "https://shivaye-frontend.onrender.com",
   "https://shivaye-crm.netlify.app",
+  "https://shivaye-luxury-cars.netlify.app",
   '*'
 ];
 
