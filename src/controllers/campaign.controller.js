@@ -52,6 +52,10 @@ export const listCampaigns = async (req, res, next) => {
 
         const filter = {};
 
+        // 🔥 FIX: Soft delete filter explicitly add karein
+        // Taaki countDocuments aur find() dono exact same records par kaam karein
+        filter.deletedAt = null;
+
         // Status Filter
         if (status && status !== "All statuses") {
             filter.status = status;
@@ -76,12 +80,19 @@ export const listCampaigns = async (req, res, next) => {
                 .sort(sortOption)
                 .skip((page - 1) * limit)
                 .limit(limit),
+
+            // Count ab exactly same filter par hoga
             Campaign.countDocuments(filter),
         ]);
 
         return ok(res, {
             data,
-            pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit)
+            },
         });
     } catch (err) {
         next(err);

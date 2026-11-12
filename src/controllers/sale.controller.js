@@ -177,10 +177,12 @@ export const listSales = async (req, res, next) => {
         const {
             paymentStatus, salesExecutive, brand, source,
             deliveryStatus, fromDate, toDate, search,
-            sort, 
+            sort,
         } = req.query;
 
         const filter = {};
+
+        filter.deletedAt = null;
 
         // Role-based filtering
         if (req.user.role === "sales_executive") {
@@ -240,15 +242,22 @@ export const listSales = async (req, res, next) => {
                 .populate("customer", "name phone email city customerNumber")
                 .populate("salesExecutive", "name email role")
                 .populate("lead", "status source")
-                .sort(sortOptions) // ✅ Applied dynamic sorting
+                .sort(sortOptions)
                 .skip((page - 1) * limit)
                 .limit(limit),
+
+            // Count ab exactly same filter par hoga
             Sale.countDocuments(filter),
         ]);
 
         return ok(res, {
             data,
-            pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit)
+            },
         });
     } catch (err) {
         next(err);
@@ -622,7 +631,7 @@ export const getSalesReport = async (req, res, next) => {
         /* ==========================================
            1. PERFORMANCE SNAPSHOT (Top 4 Cards)
            ========================================== */
-        
+
         // Vehicles in Collection
         const [totalVehicles, availableVehicles, reservedVehicles] = await Promise.all([
             Vehicle.countDocuments(),
@@ -651,14 +660,14 @@ export const getSalesReport = async (req, res, next) => {
         const revenueBooked = salesStats[0]?.totalRevenue || 0;
 
         // Calculate Lead-to-Sale percentage
-        const leadToSalePercent = totalLeads > 0 
-            ? ((salesClosed / totalLeads) * 100).toFixed(1) 
+        const leadToSalePercent = totalLeads > 0
+            ? ((salesClosed / totalLeads) * 100).toFixed(1)
             : 0;
 
         /* ==========================================
            2. SALES HISTORY TABLE (Right Side)
            ========================================== */
-        
+
         // Fetch recent sales, populate the vehicle and customer (buyer)
         const recentSales = await Sale.find()
             .sort({ saleDate: -1 })

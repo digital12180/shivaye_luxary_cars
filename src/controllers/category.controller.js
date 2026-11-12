@@ -30,14 +30,29 @@ export const listCategories = async (req, res, next) => {
             ];
         }
 
+        // 🔥 FIX: Agar model mein soft delete (deletedAt) hai, toh filter mein add karein
+        // taaki count aur find dono same records par kaam karein.
+        // (Agar model mein deletedAt nahi hai, toh is line ko hata dein)
+        filter.deletedAt = null;
+
         const [data, total] = await Promise.all([
-            Category.find(filter).sort(sortBy).skip((page - 1) * limit).limit(limit),
+            Category.find(filter)
+                .sort(sortBy)
+                .skip((page - 1) * limit)
+                .limit(limit),
+
+            // Count ab exact same filter par hoga jo data fetch kar raha hai
             Category.countDocuments(filter),
         ]);
 
         return ok(res, {
             data,
-            pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit)
+            },
         });
     } catch (err) {
         next(err);
