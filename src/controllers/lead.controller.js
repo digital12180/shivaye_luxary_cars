@@ -10,6 +10,20 @@ import { extractAttribution } from "../services/attribution.service.js";
 import { captureLocation } from "../services/geolocation.service.js";
 import Brand from "../models/Brand.js"
 
+const STAGE_RANK = {
+    "New": 1,
+    "Contacted": 2,
+    "Qualified": 3,
+    "Car Shared": 4,
+    "Visit Scheduled": 5,
+    "Test Drive": 6,
+    "Negotiation": 7,
+    "Reserved": 8,
+    "Booked": 9,
+    "Won": 10
+};
+
+
 export const publicCreateLead = async (req, res, next) => {
     try {
         // 1. Extract Attribution & Location using Services
@@ -108,10 +122,10 @@ export const publicCreateLead = async (req, res, next) => {
         if (existingLead) {
             // Update existing lead
             if (attribution) {
-                existingLead.attribution = { 
-                    ...existingLead.attribution, 
-                    ...attribution, 
-                    latestTouchAt: new Date() 
+                existingLead.attribution = {
+                    ...existingLead.attribution,
+                    ...attribution,
+                    latestTouchAt: new Date()
                 };
             }
             if (campaign && !existingLead.campaign) existingLead.campaign = campaign._id;
@@ -491,22 +505,6 @@ export const updateLead = async (req, res, next) => {
     }
 };
 
-// PATCH /api/v1/leads/:id/status
-// ✅ FIX P6: forward-only pipeline (senior's rule)
-// Once a lead reaches "Reserved", it cannot go back to earlier stages.
-// "Lost" and "Won" are terminal and can be set from any non-terminal stage.
-const STAGE_RANK = {
-    New: 0,
-    Contacted: 1,
-    Qualified: 2,
-    "Test Drive": 3,
-    "Visit Scheduled": 4,
-    Negotiation: 5,
-    Reserved: 6,
-    Booked: 7,
-    Won: 8,
-};
-
 // export const updateLeadStatus = async (req, res, next) => {
 //     try {
 //         const { status, note, lostReason, lostReasonCategory } = req.body;
@@ -555,11 +553,13 @@ const STAGE_RANK = {
 //     }
 // };
 
+
+
 export const updateLeadStatus = async (req, res, next) => {
     try {
         const { status, note, lostReason, lostReasonCategory } = req.body;
 
-        // 1. Validate status is allowed
+        // 1. Validate status is allowed (Matches Mongoose Enum)
         const allowed = Object.keys(STAGE_RANK).concat(["Lost"]);
         if (!allowed.includes(status)) {
             return fail(res, "Invalid status", 400);
@@ -596,28 +596,33 @@ export const updateLeadStatus = async (req, res, next) => {
             }
         }
 
-        // Prevent setting status to the exact same stage (optional, but good practice)
+        // Prevent setting status to the exact same stage
         if (lead.status === status) {
             return ok(res, lead, `Lead is already in ${status} stage`);
         }
 
-        // 3. Apply the changes
+        // 3. Save the OLD status before updating
+        const previousStatus = lead.status;
+
+        // 4. Apply the changes
         lead.status = status;
         lead.updatedBy = req.user._id;
 
-        // Note: Your Mongoose model has a pre('save') hook that automatically handles stageHistory.push
-        // so manually pushing here is technically redundant, but safe if you keep it.
-
+        // Handle Lost Reason Logic
         if (status === "Lost") {
             lead.lostReason = lostReason || lead.lostReason;
             lead.lostReasonCategory = lostReasonCategory || lead.lostReasonCategory;
         }
 
-        // Reset lost reason if the lead moves out of Lost stage
-        if (status !== "Lost" && lead.status === "Lost") {
+        // FIXED: Reset lost reason if the lead moves out of Lost stage
+        // Hum previousStatus check kar rahe hain, kyunki lead.status ab naya ban chuka hai
+        if (previousStatus === "Lost" && status !== "Lost") {
             lead.lostReason = null;
             lead.lostReasonCategory = null;
         }
+
+        // Note: Aapke model ke pre('save') hook mein stageHistory automatic handle ho rahi hai.
+        // Agar aap 'note' ko history mein save karna chahte hain, toh model mein hook update karein.
 
         await lead.save();
         return ok(res, lead, `Lead marked as ${status}`);
