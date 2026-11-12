@@ -46,20 +46,6 @@ export const publicCreateCustomer = async (req, res, next) => {
     }
 };
 
-// GET /api/v1/customers/profile
-// export const getMyProfile = async (req, res, next) => {
-//     try {
-//         // ✅ Use req.user._id because your middleware sets req.user!
-//         const customer = await Customer.findById(req.user._id)
-//             .populate("savedCars", "brand model year price images slug status");
-
-//         if (!customer) return fail(res, "Customer not found", 404);
-//         return ok(res, customer);
-//     } catch (err) {
-//         next(err);
-//     }
-// };
-
 export const getMyProfile = async (req, res, next) => {
     try {
         // 1. Safely check if the middleware actually set req.user
@@ -135,21 +121,32 @@ export const removeSavedCar = async (req, res, next) => {
 
 /* ================= CRM / ADMIN ================= */
 
-// GET /api/v1/customers
 export const listCustomers = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
+        const skip = (page - 1) * limit;
+        
         const { search, source, city, interestedIn, isActive, sort } = req.query;
 
-        const filter = {};
-        if (source) filter.source = source;
-        if (city) filter.city = new RegExp(city, "i");
-        if (interestedIn) filter.interestedIn = interestedIn;
-        if (isActive !== undefined) filter.isActive = isActive === "true";
+        // ==========================================
+        // 1. BUILD MATCH FILTER
+        // ==========================================
+        const matchFilter = {
+            deletedAt: null // 🔥 Fix: Soft-delete filter explicit
+        };
+
+        if (source) matchFilter.source = source;
+        if (city) matchFilter.city = new RegExp(city, "i");
+        if (interestedIn) matchFilter.interestedIn = interestedIn;
+        
+        // Boolean handling for isActive
+        if (isActive !== undefined && isActive !== "") {
+            matchFilter.isActive = isActive === "true" || isActive === true;
+        }
 
         if (search) {
-            filter.$or = [
+            matchFilter.$or = [
                 { name: new RegExp(search, "i") },
                 { phone: new RegExp(search, "i") },
                 { email: new RegExp(search, "i") },
@@ -157,40 +154,132 @@ export const listCustomers = async (req, res, next) => {
             ];
         }
 
-        // ✅ SORTING LOGIC
-        let sortOptions = { createdAt: -1 }; // Most recent default
-        if (sort === "recent") sortOptions = { createdAt: -1 };
-        else if (sort === "name_asc") sortOptions = { name: 1 };
+        // ==========================================
+        // 2. SORTING LOGIC
+        // ==========================================
+        let sortOptions = { createdAt: -1 };
+        if (sort === "name_asc") sortOptions = { name: 1 };
         else if (sort === "name_desc") sortOptions = { name: -1 };
+        else if (sort === "recent") sortOptions = { createdAt: -1 };
 
-        const customers = await Customer.find(filter)
-            .sort(sortOptions)
-            .skip((page - 1) * limit)
-            .limit(limit)
-            .lean(); // Using lean for performance
+        // ==========================================
+        // 3. AGGREGATION PIPELINE (Optimized)
+        // ==========================================
+        const pipeline = [
+            { $match: matchFilter },
+            { $sort: sortOptions },
+            { $skip: skip },
+            { $limit: limit },
 
-        // ✅ Attach counts (Enquiries, Appointments, Purchased Vehicle)
-        const data = await Promise.all(customers.map(async (cust) => {
-            const enquiriesCount = await Lead.countDocuments({ customer: cust._id });
-            const appointmentsCount = await Appointment.countDocuments({ customer: cust._id });
+            // --- Populate Saved Cars ---
+            {
+                $lookup: {
+                    from: "vehicles",
+                    localField: "savedCars",
+                    foreignField: "_id",
+                    as: "savedCars",
+                    pipeline: [
+                        { $project: { brand: 1, model: 1, year: 1, price: 1, images: 1, slug: 1, status: 1 } }
+                    ]
+                }
+            },
+            // --- Populate CreatedBy (User) ---
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "createdBy",
+                    foreignField: "_id",
+                    as: "createdBy",
+                    pipeline: [{ $project: { name: 1, email: 1, role: 1 } }]
+                }
+            },
+            { $unwind: { path: "$createdBy", preserveNullAndEmptyArrays: true } },
+            // --- Populate UpdatedBy (User) ---
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "updatedBy",
+                    foreignField: "_id",
+                    as: "updatedBy",
+                    pipeline: [{ $project: { name: 1, email: 1, role: 1 } }]
+                }
+            },
+            { $unwind: { path: "$updatedBy", preserveNullAndEmptyArrays: true } },
 
-            // Check if customer has purchased any vehicle
-            const purchasedVehicle = await Vehicle.findOne({ soldTo: cust._id, status: "Sold" }).select("brand model").lean();
+            // --- Attach Enquiries Count ---
+            {
+                $lookup: {
+                    from: "leads",
+                    localField: "_id",
+                    foreignField: "customer",
+                    as: "enquiries",
+                    pipeline: [{ $match: { deletedAt: null } }, { $count: "count" }]
+                }
+            },
+            // --- Attach Appointments Count ---
+            {
+                $lookup: {
+                    from: "appointments",
+                    localField: "_id",
+                    foreignField: "customer",
+                    as: "appointments",
+                    pipeline: [{ $match: { deletedAt: null } }, { $count: "count" }]
+                }
+            },
+            // --- Attach Purchased Vehicle ---
+            {
+                $lookup: {
+                    from: "vehicles",
+                    localField: "_id",
+                    foreignField: "soldTo",
+                    as: "purchasedVehicle",
+                    pipeline: [
+                        { $match: { status: "Sold", deletedAt: null } },
+                        { $project: { brand: 1, model: 1, year: 1, soldPrice: 1 } },
+                        { $limit: 1 }
+                    ]
+                }
+            },
 
-            return {
-                ...cust,
-                enquiriesCount,
-                appointmentsCount,
-                purchasedVehicle: purchasedVehicle ? `${purchasedVehicle.brand} ${purchasedVehicle.model}` : null,
-            };
-        }));
+            // --- Format Final Document ---
+            {
+                $addFields: {
+                    enquiriesCount: { $ifNull: [{ $arrayElemAt: ["$enquiries.count", 0] }, 0] },
+                    appointmentsCount: { $ifNull: [{ $arrayElemAt: ["$appointments.count", 0] }, 0] },
+                    purchasedVehicle: { 
+                        $let: {
+                            vars: { pv: { $arrayElemAt: ["$purchasedVehicle", 0] } },
+                            in: {
+                                $cond: [
+                                    { $ifNull: ["$$pv", false] },
+                                    { $concat: ["$$pv.brand", " ", "$$pv.model"] },
+                                    null
+                                ]
+                            }
+                        }
+                    }
+                }
+            },
+            // --- Remove temporary lookup arrays ---
+            { $project: { enquiries: 0, appointments: 0, purchasedVehicle: 0, password: 0, otp: 0, refreshTokenHash: 0 } }
+        ];
 
-        const total = await Customer.countDocuments(filter);
+        // Run Data & Count in parallel
+        const [data, total] = await Promise.all([
+            Customer.aggregate(pipeline),
+            Customer.countDocuments(matchFilter)
+        ]);
 
         return ok(res, {
             data,
-            pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+            pagination: { 
+                total, 
+                page, 
+                limit, 
+                pages: Math.ceil(total / limit) 
+            },
         });
+
     } catch (err) {
         next(err);
     }
