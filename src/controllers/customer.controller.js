@@ -366,28 +366,123 @@ export const getCustomer = async (req, res, next) => {
 
         if (!customer) return fail(res, "Customer not found", 404);
 
-        // ✅ Fetch related counts for Record Overview
-        const [enquiriesCount, appointmentsCount, reservationsCount, purchasedVehicle, recentLeads] = await Promise.all([
-            Lead.countDocuments({ customer: customer._id }),
-            Appointment.countDocuments({ customer: customer._id }),
-            Reservation.countDocuments({ customer: customer._id }), // Assuming Reservation model exists
-            Vehicle.findOne({ soldTo: customer._id, status: "Sold" }).select("brand model year askingPrice").lean(),
-            Lead.find({ customer: customer._id })
+        // ✅ Fetch everything in parallel
+        const [
+            enquiriesCount,
+            appointmentsCount,
+            reservationsCount,
+            purchasedVehicle,
+            reservedVehicles,
+            recentLeads,
+            recentAppointments,
+            recentReservations,
+        ] = await Promise.all([
+            Lead.countDocuments({ customer: customer._id, deletedAt: null }),
+            Appointment.countDocuments({ customer: customer._id, deletedAt: null }),
+            Reservation.countDocuments({ customer: customer._id, deletedAt: null }),
+
+            // Purchased (sold) vehicle — most recent
+            Vehicle.findOne({ soldTo: customer._id, status: "Sold", deletedAt: null })
+                .select("brand model year askingPrice soldPrice images slug soldAt")
+                .lean(),
+
+            // NEW: Full reserved vehicles list with populated vehicle details
+            Reservation.find({
+                customer: customer._id,
+                deletedAt: null,
+                status: { $in: ["Pending", "Confirmed", "Active", "Completed"] },
+            })
+                .populate("vehicle", "brand model year askingPrice images slug status")
+                .sort({ reservedAt: -1, createdAt: -1 })
+                .lean(),
+
+            // Recent leads (for timeline)
+            Lead.find({ customer: customer._id, deletedAt: null })
                 .sort("-createdAt")
                 .limit(5)
                 .select("leadNumber interestedVehicle status createdAt")
-                .lean()
+                .lean(),
+
+            // NEW: Recent appointments for timeline
+            Appointment.find({ customer: customer._id, deletedAt: null })
+                .sort("-createdAt")
+                .limit(5)
+                .select("appointmentNumber scheduledAt status createdAt")
+                .lean(),
+
+            // NEW: Recent reservations for timeline
+            Reservation.find({ customer: customer._id, deletedAt: null })
+                .sort("-createdAt")
+                .limit(5)
+                .select("reservationNumber reservedAt expiresAt status amount createdAt")
+                .lean(),
         ]);
+
+        // ---- Build unified activity timeline ----
+        const recentActivity = [
+            ...recentLeads.map((l) => ({
+                type: "lead",
+                at: l.createdAt,
+                id: l._id,
+                reference: l.leadNumber,
+                description: l.interestedVehicle
+                    ? `Enquiry on ${l.interestedVehicle}`
+                    : "Enquiry",
+                status: l.status,
+            })),
+            ...recentAppointments.map((a) => ({
+                type: "appointment",
+                at: a.createdAt,
+                id: a._id,
+                reference: a.appointmentNumber,
+                description: `Appointment scheduled${a.scheduledAt ? ` for ${new Date(a.scheduledAt).toDateString()}` : ""
+                    }`,
+                status: a.status,
+            })),
+            ...recentReservations.map((r) => ({
+                type: "reservation",
+                at: r.createdAt,
+                id: r._id,
+                reference: r.reservationNumber,
+                description: `Reservation ${r.amount ? `of ₹${r.amount.toLocaleString("en-IN")}` : ""
+                    }`,
+                status: r.status,
+            })),
+        ]
+            .sort((a, b) => new Date(b.at) - new Date(a.at))
+            .slice(0, 10); // last 10 events
 
         return ok(res, {
             ...customer,
+
             stats: {
                 enquiriesCount,
                 appointmentsCount,
                 reservationsCount,
-                purchasedVehicle: purchasedVehicle ? `${purchasedVehicle.brand} ${purchasedVehicle.model}` : null,
+                // String for backward-compat
+                purchasedVehicle: purchasedVehicle
+                    ? `${purchasedVehicle.brand} ${purchasedVehicle.model}`
+                    : null,
+                // Full object for richer UI
+                purchasedVehicleDetails: purchasedVehicle || null,
+                // NEW
+                reservedVehiclesCount: reservedVehicles.length,
+                hasReservedVehicle: reservedVehicles.length > 0,
             },
-            recentLeads // For "Customer history" timeline
+
+            // NEW: full reserved-vehicle list
+            reservedVehicles: reservedVehicles.map((r) => ({
+                reservationId: r._id,
+                reservationNumber: r.reservationNumber,
+                status: r.status,
+                reservedAt: r.reservedAt,
+                expiresAt: r.expiresAt,
+                amount: r.amount,
+                vehicle: r.vehicle || null,
+            })),
+
+            recentLeads,        // kept for backward compat
+            recentActivity,     // NEW: unified timeline
         });
     } catch (err) {
         next(err);
