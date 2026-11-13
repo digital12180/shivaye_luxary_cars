@@ -255,6 +255,25 @@ export const getSimilarVehicles = async (req, res, next) => {
    ============================================================ */
 export const createVehicle = async (req, res, next) => {
     try {
+
+        if (req.body.registrationNumber) {
+            req.body.registrationNumber = String(req.body.registrationNumber)
+                .trim()
+                .toUpperCase()
+                .replace(/\s+/g, ""); // remove any spaces
+
+            const existing = await Vehicle.findOne({
+                registrationNumber: req.body.registrationNumber,
+            }).select("_id stockId");
+
+            if (existing) {
+                return res.status(409).json({
+                    success: false,
+                    message: `A vehicle with registration number "${req.body.registrationNumber}" already exists.`,
+                    data: { vehicleId: existing._id, stockId: existing.stockId },
+                });
+            }
+        }
         const stockId = req.body.stockId || (await generateStockId());
 
         // ---- Auto-resolve brandRef / categoryRef ----
