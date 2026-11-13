@@ -126,21 +126,20 @@ export const listCustomers = async (req, res, next) => {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
         const skip = (page - 1) * limit;
-        
+
         const { search, source, city, interestedIn, isActive, sort } = req.query;
 
         // ==========================================
         // 1. BUILD MATCH FILTER
         // ==========================================
         const matchFilter = {
-            deletedAt: null // 🔥 Fix: Soft-delete filter explicit
+            deletedAt: null
         };
 
         if (source) matchFilter.source = source;
         if (city) matchFilter.city = new RegExp(city, "i");
         if (interestedIn) matchFilter.interestedIn = interestedIn;
-        
-        // Boolean handling for isActive
+
         if (isActive !== undefined && isActive !== "") {
             matchFilter.isActive = isActive === "true" || isActive === true;
         }
@@ -163,7 +162,7 @@ export const listCustomers = async (req, res, next) => {
         else if (sort === "recent") sortOptions = { createdAt: -1 };
 
         // ==========================================
-        // 3. AGGREGATION PIPELINE (Optimized)
+        // 3. AGGREGATION PIPELINE
         // ==========================================
         const pipeline = [
             { $match: matchFilter },
@@ -183,6 +182,7 @@ export const listCustomers = async (req, res, next) => {
                     ]
                 }
             },
+
             // --- Populate CreatedBy (User) ---
             {
                 $lookup: {
@@ -194,6 +194,7 @@ export const listCustomers = async (req, res, next) => {
                 }
             },
             { $unwind: { path: "$createdBy", preserveNullAndEmptyArrays: true } },
+
             // --- Populate UpdatedBy (User) ---
             {
                 $lookup: {
@@ -216,6 +217,7 @@ export const listCustomers = async (req, res, next) => {
                     pipeline: [{ $match: { deletedAt: null } }, { $count: "count" }]
                 }
             },
+
             // --- Attach Appointments Count ---
             {
                 $lookup: {
@@ -226,7 +228,8 @@ export const listCustomers = async (req, res, next) => {
                     pipeline: [{ $match: { deletedAt: null } }, { $count: "count" }]
                 }
             },
-            // --- Attach Purchased Vehicle ---
+
+            // --- Attach Purchased Vehicle (Sold) ---
             {
                 $lookup: {
                     from: "vehicles",
@@ -241,12 +244,63 @@ export const listCustomers = async (req, res, next) => {
                 }
             },
 
+            // --- NEW: Attach Reserved Cars (active reservations) ---
+            // Uses Reservation collection so we capture ALL reserved vehicles,
+            // not just the ones where Vehicle.soldTo happens to be set.
+            {
+                $lookup: {
+                    from: "reservations",
+                    localField: "_id",
+                    foreignField: "customer",
+                    as: "reservedVehicles",
+                    pipeline: [
+                        {
+                            $match: {
+                                status: { $in: ["Pending", "Confirmed", "Active", "Completed"] },
+                                deletedAt: null,
+                            }
+                        },
+                        // Join each reservation to its vehicle
+                        {
+                            $lookup: {
+                                from: "vehicles",
+                                localField: "vehicle",
+                                foreignField: "_id",
+                                as: "vehicleDoc",
+                                pipeline: [
+                                    {
+                                        $project: {
+                                            brand: 1, model: 1, year: 1,
+                                            askingPrice: 1, images: 1,
+                                            slug: 1, status: 1,
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        { $unwind: { path: "$vehicleDoc", preserveNullAndEmptyArrays: true } },
+                        // Shape the reserved vehicle entry
+                        {
+                            $project: {
+                                _id: 1,
+                                reservationNumber: 1,
+                                status: 1,
+                                reservedAt: 1,
+                                expiresAt: 1,
+                                amount: 1,
+                                vehicle: "$vehicleDoc",
+                            }
+                        },
+                    ]
+                }
+            },
+
             // --- Format Final Document ---
             {
                 $addFields: {
                     enquiriesCount: { $ifNull: [{ $arrayElemAt: ["$enquiries.count", 0] }, 0] },
                     appointmentsCount: { $ifNull: [{ $arrayElemAt: ["$appointments.count", 0] }, 0] },
-                    purchasedVehicle: { 
+                    purchasedVehicle: {
                         $let: {
                             vars: { pv: { $arrayElemAt: ["$purchasedVehicle", 0] } },
                             in: {
@@ -257,11 +311,27 @@ export const listCustomers = async (req, res, next) => {
                                 ]
                             }
                         }
-                    }
+                    },
+                    // NEW: Reserved car summary
+                    reservedVehicles: { $ifNull: ["$reservedVehicles", []] },
+                    reservedCount: { $size: { $ifNull: ["$reservedVehicles", []] } },
+                    hasReservedVehicle: {
+                        $gt: [{ $size: { $ifNull: ["$reservedVehicles", []] } }, 0]
+                    },
                 }
             },
+
             // --- Remove temporary lookup arrays ---
-            { $project: { enquiries: 0, appointments: 0, purchasedVehicle: 0, password: 0, otp: 0, refreshTokenHash: 0 } }
+            {
+                $project: {
+                    enquiries: 0,
+                    appointments: 0,
+                    purchasedVehicle: 0,
+                    password: 0,
+                    otp: 0,
+                    refreshTokenHash: 0,
+                }
+            }
         ];
 
         // Run Data & Count in parallel
@@ -272,11 +342,11 @@ export const listCustomers = async (req, res, next) => {
 
         return ok(res, {
             data,
-            pagination: { 
-                total, 
-                page, 
-                limit, 
-                pages: Math.ceil(total / limit) 
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit)
             },
         });
 

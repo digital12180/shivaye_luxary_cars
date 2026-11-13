@@ -50,6 +50,7 @@ const corsOptions = {
   credentials: true,
 };
 
+app.set("trust proxy", 1)
 // ✅ Handle preflight for all routes
 // app.options(cors(corsOptions));
 app.use(cors(corsOptions));
