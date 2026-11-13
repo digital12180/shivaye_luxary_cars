@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import crypto  from "crypto"
 
 const sellRequestSchema = new mongoose.Schema(
     {
@@ -66,16 +67,20 @@ const sellRequestSchema = new mongoose.Schema(
     { timestamps: true }
 );
 
-// FIX: count only non-deleted docs + retry on race
-sellRequestSchema.pre("save", async function () {
-    if (!this.requestNumber) {
-        const count = await mongoose
-            .model("SellRequest")
-            .countDocuments({ deletedAt: null });
-        this.requestNumber = `SR-${String(count + 1).padStart(4, "0")}`;
-    }
-});
 
+sellRequestSchema.index({ requestNumber: 1 }, { unique: true });
+
+sellRequestSchema.pre("save", async function () {
+  if (this.requestNumber) return;
+
+  const count = await mongoose
+    .model("SellRequest")
+    .countDocuments({ deletedAt: null });
+
+  const hash = crypto.randomBytes(3).toString("hex").slice(0, 4).toUpperCase();
+
+  this.requestNumber = `SR-${String(count + 1).padStart(4, "0")}-${hash}`;
+});
 // Exclude soft-deleted records from find queries (find, findOne, findById)
 sellRequestSchema.pre(/^find/, function () {
     this.where({ deletedAt: null });

@@ -114,15 +114,6 @@ export const createSellRequest = async (req, res) => {
                 console.error("Cloudinary cleanup failed:", cleanupErr);
             }
         }
-
-        if (error.code === 11000) {
-            const field = Object.keys(error.keyPattern || {})[0] || "field";
-            return res.status(409).json({
-                success: false,
-                message: `A sell request with this ${field} already exists.`,
-            });
-        }
-
         return res.status(400).json({ success: false, message: error.message });
     }
 };
