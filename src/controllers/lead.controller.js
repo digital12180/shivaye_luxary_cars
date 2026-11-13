@@ -28,7 +28,7 @@ export const publicCreateLead = async (req, res, next) => {
     try {
         // 1. Extract Attribution & Location using Services
         const attribution = extractAttribution(req);
-        const { ip, location } = await captureLocation(req); // getClientIp + resolveLocation combined
+        const { ip, location } = captureLocation(req);  // getClientIp + resolveLocation combined
 
         const {
             name, phone, email, city,

@@ -20,13 +20,13 @@ const pick = (obj, keys) =>
         if (obj[k] !== undefined) acc[k] = obj[k];
         return acc;
     }, {});
-    
+
 export const createSellRequest = async (req, res) => {
     const uploadedPublicIds = []; // track for rollback
 
     try {
         const data = req.body || {};
-
+        const { ip, location } = captureLocation(req);
         // 1. Validate required fields (Customer)
         if (!data.phone || !data.name) {
             return res.status(400).json({
@@ -56,7 +56,8 @@ export const createSellRequest = async (req, res) => {
                     ? customerSource
                     : "other",
                 interestedIn: "sell",
-                ipAddress: req.ip || null,
+                ipAddress: ip,         
+                ipLocation: location,
             });
         } else {
             if (data.name && customer.name !== data.name) customer.name = data.name;
@@ -153,7 +154,7 @@ export const getAllSellRequests = async (req, res) => {
                 .sort({ createdAt: -1 })
                 .skip((page - 1) * limit)
                 .limit(limit),
-            
+
             // Count ab exactly same query par hoga
             SellRequest.countDocuments(query),
         ]);
@@ -161,10 +162,10 @@ export const getAllSellRequests = async (req, res) => {
         res.status(200).json({
             success: true,
             data: requests,
-            pagination: { 
-                total, 
-                page, 
-                pages: Math.ceil(total / limit) 
+            pagination: {
+                total,
+                page,
+                pages: Math.ceil(total / limit)
             },
         });
     } catch (error) {

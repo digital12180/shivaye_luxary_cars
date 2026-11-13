@@ -117,6 +117,7 @@ const ALLOWED_SOURCES = [
 export const publicCreateReservation = async (req, res, next) => {
     try {
         const attribution = extractAttribution(req);
+        const { ip, location } = captureLocation(req);
         const {
             name, phone, email, city,
             vehicle: vehicleId,
@@ -157,7 +158,8 @@ export const publicCreateReservation = async (req, res, next) => {
                 email,
                 city,
                 source: safeSource,
-                ipAddress: req.ip || req.headers["x-forwarded-for"] || null,
+                ipAddress: ip,         
+                ipLocation: location,
             });
         }
 
@@ -179,7 +181,7 @@ export const publicCreateReservation = async (req, res, next) => {
         const vehiclePrice = Number(vehicle.askingPrice) || 0;
         let reservationAmount = 25000;
         if (vehiclePrice > 2500000) {
-            reservationAmount =50000;
+            reservationAmount = 50000;
         }
 
         /* 6. Create reservation — vehicle stays "Available" */
