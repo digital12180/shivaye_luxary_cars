@@ -7,11 +7,28 @@ import axios from "axios";
 /**
  * Get client IP from Express request.
  */
+// export const getClientIp = (req) => {
+//   const forwarded = req.headers["x-forwarded-for"];
+//   if (forwarded) {
+//     return forwarded.split(",")[0].trim();
+//   }
+//   return req.ip || req.connection?.remoteAddress || null;
+// };
+
 export const getClientIp = (req) => {
+  // Render + Cloudflare: real client IP, client ise forge nahi kar sakta
+  const cfIp = req.headers["cf-connecting-ip"];
+  if (cfIp) return cfIp.trim();
+
+  // Fallback (local dev ya Cloudflare ke bagair): X-Forwarded-For
+  // Lekin dhyaan rahe, ye spoof ho sakta hai, production mein ispar depend na karein
   const forwarded = req.headers["x-forwarded-for"];
   if (forwarded) {
+    // Right se left ki taraf jayein, proxy IP ko skip karein
+    // Simple case mein, agar sirf ek proxy hai, to seedhe req.ip use karein
     return forwarded.split(",")[0].trim();
   }
+
   return req.ip || req.connection?.remoteAddress || null;
 };
 
