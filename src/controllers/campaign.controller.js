@@ -26,36 +26,40 @@ import { uploadToCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js
 
 export const getActiveCampaigns = async (req, res, next) => {
     try {
-        // IST mein aaj ka din start & end
         const now = new Date();
 
-        // IST date string → UTC date
-        const istNow = new Date(
-            now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
-        );
-
-        let campaign = await Campaign.findOne({
+        // 1️⃣ Saare valid campaigns fetch karo (current + upcoming)
+        const campaigns = await Campaign.find({
             isActive: true,
-            startDate: { $lte: istNow },
+            deletedAt: null,
             $or: [
-                { endDate: { $gte: istNow } },
-                { endDate: null },
-                { endDate: { $exists: false } },
+                // Currently running
+                {
+                    startDate: { $lte: now },
+                    $or: [
+                        { endDate: { $gte: now } },
+                        { endDate: null },
+                        { endDate: { $exists: false } },
+                    ],
+                },
+                // Upcoming (aane wala)
+                { startDate: { $gt: now } },
             ],
         })
-            .sort("-startDate")
+            .sort("-startDate")   // latest pehle
             .select("-metrics -spend -budget -createdBy -updatedBy");
 
-        if (!campaign) {
-            campaign = await Campaign.findOne({
-                isActive: true,
-                startDate: { $gt: istNow },
-            })
-                .sort("startDate")
-                .select("-metrics -spend -budget -createdBy -updatedBy");
+        // 2️⃣ Rotation — har 10 min mein index badhe
+        let selected = null;
+        if (campaigns.length > 0) {
+            const SLOT_MS = 10 * 60 * 1000;             // 10 minutes
+            const slot = Math.floor(Date.now() / SLOT_MS);
+            const index = slot % campaigns.length;      // rotate 0 → 1 → 2 → 0...
+            selected = campaigns[index];
         }
 
-        return ok(res, campaign || null);
+        // 3️⃣ ALWAYS array return karo (single ho tab bhi)
+        return ok(res, selected ? [selected] : []);
     } catch (err) {
         next(err);
     }
