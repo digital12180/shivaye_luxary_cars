@@ -1,25 +1,25 @@
 
 
-import geoip from "geoip-lite";
+// import geoip from "geoip-lite";
 
-/**
- * Get real client IP from Express request.
- * Render + Cloudflare: CF-Connecting-IP is the real client IP.
- */
-export const getClientIp = (req) => {
-  // 1. Cloudflare (Render ke aage) — sabse reliable
-  const cfIp = req.headers["cf-connecting-ip"];
-  if (cfIp && typeof cfIp === "string") return cfIp.trim();
+// /**
+//  * Get real client IP from Express request.
+//  * Render + Cloudflare: CF-Connecting-IP is the real client IP.
+//  */
+// export const getClientIp = (req) => {
+//   // 1. Cloudflare (Render ke aage) — sabse reliable
+//   const cfIp = req.headers["cf-connecting-ip"];
+//   if (cfIp && typeof cfIp === "string") return cfIp.trim();
 
-  // 2. X-Forwarded-For fallback (local dev / non-Cloudflare)
-  const forwarded = req.headers["x-forwarded-for"];
-  if (forwarded && typeof forwarded === "string") {
-    return forwarded.split(",")[0].trim();
-  }
+//   // 2. X-Forwarded-For fallback (local dev / non-Cloudflare)
+//   const forwarded = req.headers["x-forwarded-for"];
+//   if (forwarded && typeof forwarded === "string") {
+//     return forwarded.split(",")[0].trim();
+//   }
 
-  // 3. Direct socket
-  return req.ip || req.connection?.remoteAddress || null;
-};
+//   // 3. Direct socket
+//   return req.ip || req.connection?.remoteAddress || null;
+// };
 
 /**
  * Resolve IP → { country, state, city }
@@ -86,25 +86,30 @@ export const getClientIp = (req) => {
 //   return { ip, location };
 // };
 
+import geoip from "geoip-lite";
 
-export const resolveLocation = (req, ip) => {
-  // 1. Cloudflare data (sabse accurate, free)
-  if (req?.cf?.country) {
-    return {
-      country: req.cf.country || null,
-      state: req.cf.region || null,
-      city: req.cf.city || null,
-      timezone: req.cf.timezone || null,
-      coordinates:
-        req.cf.latitude && req.cf.longitude
-          ? [parseFloat(req.cf.latitude), parseFloat(req.cf.longitude)]
-          : null,
-      accuracyRadius: null,
-      source: "cloudflare",
-    };
+/**
+ * Get real client IP from Express request.
+ */
+export const getClientIp = (req) => {
+  if (!req) return null;
+
+  const cfIp = req.headers?.["cf-connecting-ip"];
+  if (cfIp && typeof cfIp === "string") return cfIp.trim();
+
+  const forwarded = req.headers?.["x-forwarded-for"];
+  if (forwarded && typeof forwarded === "string") {
+    return forwarded.split(",")[0].trim();
   }
 
-  // 2. Fallback: geoip-lite (local dev / non-CF)
+  return req.ip || req.connection?.remoteAddress || null;
+};
+
+/**
+ * Resolve IP → location object.
+ * Signature: resolveLocation(ip)  <-- SIRF IP leta hai, req nahi.
+ */
+export const resolveLocation = (ip) => {
   const empty = {
     country: null,
     state: null,
@@ -119,7 +124,7 @@ export const resolveLocation = (req, ip) => {
   let cleanIp = ip;
   if (cleanIp.startsWith("::ffff:")) cleanIp = cleanIp.slice(7);
 
-  // Private / loopback skip
+  // Skip private / loopback
   if (
     cleanIp === "::1" ||
     cleanIp === "127.0.0.1" ||
@@ -147,8 +152,11 @@ export const resolveLocation = (req, ip) => {
   };
 };
 
+/**
+ * One-shot helper: request se IP + location.
+ */
 export const captureLocation = (req) => {
   const ip = getClientIp(req);
-  const location = resolveLocation(req, ip);
+  const location = resolveLocation(ip);
   return { ip, location };
 };
