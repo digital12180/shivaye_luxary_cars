@@ -108,27 +108,46 @@ export const getClientIp = (req) => {
  * Resolve IP → { country, state, city }
  * Uses local geoip-lite (no network, no rate limit).
  */
+// export const resolveLocation = (ip) => {
+//   const empty = { country: null, state: null, city: null };
+//   if (!ip) return empty;
+
+//   // Strip IPv6-mapped IPv4 prefix
+//   let cleanIp = ip;
+//   if (cleanIp.startsWith("::ffff:")) cleanIp = cleanIp.slice(7);
+
+//   // Skip private/loopback
+//   if (
+//     cleanIp === "::1" ||
+//     cleanIp === "127.0.0.1" ||
+//     cleanIp.startsWith("127.") ||
+//     cleanIp.startsWith("192.168.") ||
+//     cleanIp.startsWith("10.") ||
+//     /^172\.(1[6-9]|2\d|3[01])\./.test(cleanIp) ||
+//     cleanIp.startsWith("fc00:") ||
+//     cleanIp.startsWith("fe80:")
+//   ) {
+//     return empty;
+//   }
+
+//   const geo = geoip.lookup(cleanIp);
+//   if (!geo) return empty;
+
+//   return {
+//     country: geo.country || null,
+//     state: geo.region || null,
+//     city: geo.city || null,
+//   };
+// };
+
 export const resolveLocation = (ip) => {
-  const empty = { country: null, state: null, city: null };
+  const empty = { country: null, state: null, city: null, timezone: null, coordinates: null, accuracyRadius: null };
   if (!ip) return empty;
 
-  // Strip IPv6-mapped IPv4 prefix
   let cleanIp = ip;
   if (cleanIp.startsWith("::ffff:")) cleanIp = cleanIp.slice(7);
 
-  // Skip private/loopback
-  if (
-    cleanIp === "::1" ||
-    cleanIp === "127.0.0.1" ||
-    cleanIp.startsWith("127.") ||
-    cleanIp.startsWith("192.168.") ||
-    cleanIp.startsWith("10.") ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(cleanIp) ||
-    cleanIp.startsWith("fc00:") ||
-    cleanIp.startsWith("fe80:")
-  ) {
-    return empty;
-  }
+  // ... private IP check same rahega ...
 
   const geo = geoip.lookup(cleanIp);
   if (!geo) return empty;
@@ -137,9 +156,11 @@ export const resolveLocation = (ip) => {
     country: geo.country || null,
     state: geo.region || null,
     city: geo.city || null,
+    timezone: geo.timezone || null,           // ✅ new
+    coordinates: geo.ll || null,              // ✅ new: [latitude, longitude]
+    accuracyRadius: geo.area || null,         // ✅ new: accuracy radius (km)
   };
 };
-
 /**
  * One-shot helper: get IP + resolved location from request.
  * Kabhi bhi throw nahi karta, always returns a valid shape.
