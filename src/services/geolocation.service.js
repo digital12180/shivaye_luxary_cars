@@ -57,31 +57,98 @@ export const getClientIp = (req) => {
 //   };
 // };
 
-export const resolveLocation = (req) => {
-  if (req.cf?.country) {
+// export const resolveLocation = (req) => {
+//   if (req.cf?.country) {
+//     return {
+//       country: req.cf.country || null,
+//       state: req.cf.region || null,
+//       city: req.cf.city || null,
+//       timezone: req.cf.timezone || null,
+//       coordinates: req.cf.latitude && req.cf.longitude
+//         ? [parseFloat(req.cf.latitude), parseFloat(req.cf.longitude)]
+//         : null,
+//       accuracyRadius: null,
+//       source: 'cloudflare'
+//     };
+//   }
+
+//   // Fallback: geoip-lite (sirf local dev ya non-CF ke liye)
+//   const ip = getClientIp(req);
+//   // ... aapka mojooda geoip-lite logic ...
+// };
+// /**
+//  * One-shot helper: get IP + resolved location from request.
+//  * Kabhi bhi throw nahi karta, always returns a valid shape.
+//  */
+// export const captureLocation = (req) => {
+//   const ip = getClientIp(req);
+//   const location = resolveLocation(ip);
+//   return { ip, location };
+// };
+
+
+export const resolveLocation = (req, ip) => {
+  // 1. Cloudflare data (sabse accurate, free)
+  if (req?.cf?.country) {
     return {
       country: req.cf.country || null,
       state: req.cf.region || null,
       city: req.cf.city || null,
       timezone: req.cf.timezone || null,
-      coordinates: req.cf.latitude && req.cf.longitude
-        ? [parseFloat(req.cf.latitude), parseFloat(req.cf.longitude)]
-        : null,
+      coordinates:
+        req.cf.latitude && req.cf.longitude
+          ? [parseFloat(req.cf.latitude), parseFloat(req.cf.longitude)]
+          : null,
       accuracyRadius: null,
-      source: 'cloudflare'
+      source: "cloudflare",
     };
   }
 
-  // Fallback: geoip-lite (sirf local dev ya non-CF ke liye)
-  const ip = getClientIp(req);
-  // ... aapka mojooda geoip-lite logic ...
+  // 2. Fallback: geoip-lite (local dev / non-CF)
+  const empty = {
+    country: null,
+    state: null,
+    city: null,
+    timezone: null,
+    coordinates: null,
+    accuracyRadius: null,
+    source: "none",
+  };
+  if (!ip) return empty;
+
+  let cleanIp = ip;
+  if (cleanIp.startsWith("::ffff:")) cleanIp = cleanIp.slice(7);
+
+  // Private / loopback skip
+  if (
+    cleanIp === "::1" ||
+    cleanIp === "127.0.0.1" ||
+    cleanIp.startsWith("127.") ||
+    cleanIp.startsWith("192.168.") ||
+    cleanIp.startsWith("10.") ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(cleanIp) ||
+    cleanIp.startsWith("fc00:") ||
+    cleanIp.startsWith("fe80:")
+  ) {
+    return empty;
+  }
+
+  const geo = geoip.lookup(cleanIp);
+  if (!geo) return empty;
+
+  return {
+    country: geo.country || null,
+    state: geo.region || null,
+    city: geo.city || null,
+    timezone: geo.timezone || null,
+    coordinates: geo.ll || null,
+    accuracyRadius: geo.area || null,
+    source: "geoip-lite",
+  };
 };
-/**
- * One-shot helper: get IP + resolved location from request.
- * Kabhi bhi throw nahi karta, always returns a valid shape.
- */
+
 export const captureLocation = (req) => {
   const ip = getClientIp(req);
-  const location = resolveLocation(ip);
+  const location = resolveLocation(req, ip);
   return { ip, location };
 };
