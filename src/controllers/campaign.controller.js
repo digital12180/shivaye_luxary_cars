@@ -26,22 +26,36 @@ import { uploadToCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js
 
 export const getActiveCampaigns = async (req, res, next) => {
     try {
+        // IST mein aaj ka din start & end
         const now = new Date();
 
-        const campaigns = await Campaign.find({
+        // IST date string → UTC date
+        const istNow = new Date(
+            now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
+        );
+
+        let campaign = await Campaign.findOne({
             isActive: true,
-            status: { $regex: /^active$/i },        // case-insensitive
-            startDate: { $lte: now },
+            startDate: { $lte: istNow },
             $or: [
-                { endDate: { $gte: now } },
-                { endDate: { $exists: false } },     // no end = open-ended
+                { endDate: { $gte: istNow } },
                 { endDate: null },
+                { endDate: { $exists: false } },
             ],
         })
             .sort("-startDate")
             .select("-metrics -spend -budget -createdBy -updatedBy");
 
-        return ok(res, campaigns);
+        if (!campaign) {
+            campaign = await Campaign.findOne({
+                isActive: true,
+                startDate: { $gt: istNow },
+            })
+                .sort("startDate")
+                .select("-metrics -spend -budget -createdBy -updatedBy");
+        }
+
+        return ok(res, campaign || null);
     } catch (err) {
         next(err);
     }
