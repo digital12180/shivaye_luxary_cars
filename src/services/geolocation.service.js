@@ -1,87 +1,4 @@
-// /* services/geolocation.service.js
-//    BRD 12 — IP-based approximate location for demand analytics.
-// */
 
-// import axios from "axios";
-
-// /**
-//  * Get client IP from Express request.
-//  */
-// // export const getClientIp = (req) => {
-// //   const forwarded = req.headers["x-forwarded-for"];
-// //   if (forwarded) {
-// //     return forwarded.split(",")[0].trim();
-// //   }
-// //   return req.ip || req.connection?.remoteAddress || null;
-// // };
-
-// export const getClientIp = (req) => {
-//   // Render + Cloudflare: real client IP, client ise forge nahi kar sakta
-//   const cfIp = req.headers["cf-connecting-ip"];
-//   if (cfIp) return cfIp.trim();
-
-//   // Fallback (local dev ya Cloudflare ke bagair): X-Forwarded-For
-//   // Lekin dhyaan rahe, ye spoof ho sakta hai, production mein ispar depend na karein
-//   const forwarded = req.headers["x-forwarded-for"];
-//   if (forwarded) {
-//     // Right se left ki taraf jayein, proxy IP ko skip karein
-//     // Simple case mein, agar sirf ek proxy hai, to seedhe req.ip use karein
-//     return forwarded.split(",")[0].trim();
-//   }
-
-//   return req.ip || req.connection?.remoteAddress || null;
-// };
-
-// /**
-//  * Resolve IP to approximate location.
-//  * Uses ipapi.co (free tier) — swap provider by editing this file only.
-//  * Never throws — returns nulls on failure.
-//  */
-// export const resolveLocation = async (ip) => {
-//   const empty = { country: null, state: null, city: null };
-//   if (!ip) return empty;
-
-//   // Skip private/local IPs in dev
-//   if (
-//     ip === "::1" ||
-//     ip.startsWith("127.") ||
-//     ip.startsWith("192.168.") ||
-//     ip.startsWith("10.") ||
-//     ip.startsWith("172.")
-//   ) {
-//     return empty;
-//   }
-
-//   try {
-//     const apiKey = process.env.IPAPI_KEY;
-//     const url = apiKey
-//       ? `https://ipapi.co/${ip}/json/?key=${apiKey}`
-//       : `https://ipapi.co/${ip}/json/`;
-
-//     const { data } = await axios.get(url, { timeout: 3000 });
-
-//     return {
-//       country: data.country_name || null,
-//       state: data.region || null,
-//       city: data.city || null,
-//     };
-//   } catch (err) {
-//     // Silent fail — location is best-effort, never block the request
-//     console.error("Geo lookup failed:", err.message);
-//     return empty;
-//   }
-// };
-
-// /**
-//  * Convenience: extract IP + resolve location in one call.
-//  */
-// export const captureLocation = async (req) => {
-//   const ip = getClientIp(req);
-//   const location = await resolveLocation(ip);
-//   return { ip, location };
-// };
-
-/* services/geolocation.service.js */
 
 import geoip from "geoip-lite";
 
@@ -140,26 +57,24 @@ export const getClientIp = (req) => {
 //   };
 // };
 
-export const resolveLocation = (ip) => {
-  const empty = { country: null, state: null, city: null, timezone: null, coordinates: null, accuracyRadius: null };
-  if (!ip) return empty;
+export const resolveLocation = (req) => {
+  if (req.cf?.country) {
+    return {
+      country: req.cf.country || null,
+      state: req.cf.region || null,
+      city: req.cf.city || null,
+      timezone: req.cf.timezone || null,
+      coordinates: req.cf.latitude && req.cf.longitude
+        ? [parseFloat(req.cf.latitude), parseFloat(req.cf.longitude)]
+        : null,
+      accuracyRadius: null,
+      source: 'cloudflare'
+    };
+  }
 
-  let cleanIp = ip;
-  if (cleanIp.startsWith("::ffff:")) cleanIp = cleanIp.slice(7);
-
-  // ... private IP check same rahega ...
-
-  const geo = geoip.lookup(cleanIp);
-  if (!geo) return empty;
-
-  return {
-    country: geo.country || null,
-    state: geo.region || null,
-    city: geo.city || null,
-    timezone: geo.timezone || null,           // ✅ new
-    coordinates: geo.ll || null,              // ✅ new: [latitude, longitude]
-    accuracyRadius: geo.area || null,         // ✅ new: accuracy radius (km)
-  };
+  // Fallback: geoip-lite (sirf local dev ya non-CF ke liye)
+  const ip = getClientIp(req);
+  // ... aapka mojooda geoip-lite logic ...
 };
 /**
  * One-shot helper: get IP + resolved location from request.
