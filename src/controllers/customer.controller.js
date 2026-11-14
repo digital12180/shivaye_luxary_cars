@@ -7,6 +7,7 @@ import { captureLocation } from "../services/geolocation.service.js";
 import Lead from "../models/Lead.js";
 import Appointment from "../models/Appointment.js";
 import Reservation from "../models/Reservation.js";
+import SellRequest from "../models/sellRequest.js"
 
 
 export const publicCreateCustomer = async (req, res, next) => {
@@ -355,7 +356,6 @@ export const listCustomers = async (req, res, next) => {
     }
 };
 
-// GET /api/v1/customers/:id
 export const getCustomer = async (req, res, next) => {
     try {
         const customer = await Customer.findById(req.params.id)
@@ -371,22 +371,26 @@ export const getCustomer = async (req, res, next) => {
             enquiriesCount,
             appointmentsCount,
             reservationsCount,
+            sellRequestsCount,
             purchasedVehicle,
             reservedVehicles,
+            sellRequests,
             recentLeads,
             recentAppointments,
             recentReservations,
+            recentSellRequests,
         ] = await Promise.all([
             Lead.countDocuments({ customer: customer._id, deletedAt: null }),
             Appointment.countDocuments({ customer: customer._id, deletedAt: null }),
             Reservation.countDocuments({ customer: customer._id, deletedAt: null }),
+            SellRequest.countDocuments({ customer: customer._id }),
 
             // Purchased (sold) vehicle — most recent
             Vehicle.findOne({ soldTo: customer._id, status: "Sold", deletedAt: null })
                 .select("brand model year askingPrice soldPrice images slug soldAt")
                 .lean(),
 
-            // NEW: Full reserved vehicles list with populated vehicle details
+            // Full reserved vehicles list
             Reservation.find({
                 customer: customer._id,
                 deletedAt: null,
@@ -396,29 +400,44 @@ export const getCustomer = async (req, res, next) => {
                 .sort({ reservedAt: -1, createdAt: -1 })
                 .lean(),
 
-            // Recent leads (for timeline)
+            // ✅ NEW: Full sell requests list (customer's cars offered for sale)
+            SellRequest.find({ customer: customer._id })
+                .sort({ createdAt: -1 })
+                .select(
+                    "brand model variant year kilometers askingPrice expectedPrice status photos createdAt"
+                )
+                .lean(),
+
+            // Recent leads
             Lead.find({ customer: customer._id, deletedAt: null })
                 .sort("-createdAt")
                 .limit(5)
                 .select("leadNumber interestedVehicle status createdAt")
                 .lean(),
 
-            // NEW: Recent appointments for timeline
+            // Recent appointments
             Appointment.find({ customer: customer._id, deletedAt: null })
                 .sort("-createdAt")
                 .limit(5)
                 .select("appointmentNumber scheduledAt status createdAt")
                 .lean(),
 
-            // NEW: Recent reservations for timeline
+            // Recent reservations
             Reservation.find({ customer: customer._id, deletedAt: null })
                 .sort("-createdAt")
                 .limit(5)
                 .select("reservationNumber reservedAt expiresAt status amount createdAt")
                 .lean(),
+
+            // ✅ NEW: Recent sell requests (for timeline)
+            SellRequest.find({ customer: customer._id })
+                .sort("-createdAt")
+                .limit(5)
+                .select("brand model year askingPrice status createdAt")
+                .lean(),
         ]);
 
-        // ---- Build unified activity timeline ----
+        // ---- Unified activity timeline ----
         const recentActivity = [
             ...recentLeads.map((l) => ({
                 type: "lead",
@@ -435,8 +454,7 @@ export const getCustomer = async (req, res, next) => {
                 at: a.createdAt,
                 id: a._id,
                 reference: a.appointmentNumber,
-                description: `Appointment scheduled${a.scheduledAt ? ` for ${new Date(a.scheduledAt).toDateString()}` : ""
-                    }`,
+                description: `Appointment scheduled${a.scheduledAt ? ` for ${new Date(a.scheduledAt).toDateString()}` : ""}`,
                 status: a.status,
             })),
             ...recentReservations.map((r) => ({
@@ -444,13 +462,21 @@ export const getCustomer = async (req, res, next) => {
                 at: r.createdAt,
                 id: r._id,
                 reference: r.reservationNumber,
-                description: `Reservation ${r.amount ? `of ₹${r.amount.toLocaleString("en-IN")}` : ""
-                    }`,
+                description: `Reservation ${r.amount ? `of ₹${r.amount.toLocaleString("en-IN")}` : ""}`,
                 status: r.status,
+            })),
+            // ✅ NEW: Sell request activity
+            ...recentSellRequests.map((s) => ({
+                type: "sell_request",
+                at: s.createdAt,
+                id: s._id,
+                reference: null,
+                description: `Sell request: ${s.brand || ""} ${s.model || ""} ${s.year || ""}`.trim(),
+                status: s.status,
             })),
         ]
             .sort((a, b) => new Date(b.at) - new Date(a.at))
-            .slice(0, 10); // last 10 events
+            .slice(0, 10);
 
         return ok(res, {
             ...customer,
@@ -459,18 +485,16 @@ export const getCustomer = async (req, res, next) => {
                 enquiriesCount,
                 appointmentsCount,
                 reservationsCount,
-                // String for backward-compat
+                sellRequestsCount, // ✅ NEW
                 purchasedVehicle: purchasedVehicle
                     ? `${purchasedVehicle.brand} ${purchasedVehicle.model}`
                     : null,
-                // Full object for richer UI
                 purchasedVehicleDetails: purchasedVehicle || null,
-                // NEW
                 reservedVehiclesCount: reservedVehicles.length,
                 hasReservedVehicle: reservedVehicles.length > 0,
+                hasSellRequest: sellRequests.length > 0, // ✅ NEW
             },
 
-            // NEW: full reserved-vehicle list
             reservedVehicles: reservedVehicles.map((r) => ({
                 reservationId: r._id,
                 reservationNumber: r.reservationNumber,
@@ -481,8 +505,24 @@ export const getCustomer = async (req, res, next) => {
                 vehicle: r.vehicle || null,
             })),
 
-            recentLeads,        // kept for backward compat
-            recentActivity,     // NEW: unified timeline
+            // ✅ NEW: full sell requests list
+            sellRequests: sellRequests.map((s) => ({
+                _id: s._id,
+                brand: s.brand || null,
+                model: s.model || null,
+                variant: s.variant || null,
+                year: s.year || null,
+                kilometers: s.kilometers || null,
+                askingPrice: s.askingPrice || null,
+                expectedPrice: s.expectedPrice || null,
+                status: s.status,
+                photos: s.photos || [],
+                createdAt: s.createdAt,
+                displayName: `${s.brand || ""} ${s.model || ""} ${s.year || ""}`.trim() || "Sell request",
+            })),
+
+            recentLeads,
+            recentActivity,
         });
     } catch (err) {
         next(err);
