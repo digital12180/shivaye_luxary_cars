@@ -10,6 +10,7 @@ import { ok, fail } from "../utils/response.js";
 import { sendNotification } from "../services/notification.service.js";
 import { extractAttribution } from "../services/attribution.service.js";
 import { notifyReservationConfirmed } from "../services/notification.service.js"
+import { captureLocation } from "../services/geolocation.service.js"
 
 const generateReservationNumber = () => {
     const date = new Date();
@@ -158,7 +159,7 @@ export const publicCreateReservation = async (req, res, next) => {
                 email,
                 city,
                 source: safeSource,
-                ipAddress: ip,         
+                ipAddress: ip,
                 ipLocation: location,
             });
         }

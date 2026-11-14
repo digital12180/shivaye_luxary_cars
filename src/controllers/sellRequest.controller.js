@@ -5,6 +5,7 @@ import {
     deleteMultipleFromCloudinary,
 } from "../utils/cloudinary.js";
 import mongoose from "mongoose";
+import { captureLocation } from "../services/geolocation.service.js"
 
 
 const PUBLIC_FIELDS = [
@@ -56,7 +57,7 @@ export const createSellRequest = async (req, res) => {
                     ? customerSource
                     : "other",
                 interestedIn: "sell",
-                ipAddress: ip,         
+                ipAddress: ip,
                 ipLocation: location,
             });
         } else {
