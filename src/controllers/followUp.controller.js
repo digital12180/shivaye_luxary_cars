@@ -56,7 +56,9 @@ export const listFollowUps = async (req, res, next) => {
         const limit = Number(req.query.limit) || 20;
         const { status, leadId, assignedTo, dueDate } = req.query;
 
-        const filter = {};
+        const filter = {
+            deletedAt: null,   // <-- ADD: soft-deleted records exclude karo
+        };
         if (status) filter.status = status;
         if (leadId) filter.lead = leadId;
         if (assignedTo) filter.assignedTo = assignedTo;
@@ -81,12 +83,11 @@ export const listFollowUps = async (req, res, next) => {
                 .sort("dueDate")
                 .skip((page - 1) * limit)
                 .limit(limit)
-                .lean(),               // <-- lean for plain objects
-            FollowUp.countDocuments(filter),
+                .lean(),
+            FollowUp.countDocuments(filter),   // <-- same filter, deleted excluded
         ]);
 
         // Defensive: overdue "Upcoming" ko "Missed" dikhao
-        // ✅ Naya
         const startOfToday = new Date();
         startOfToday.setHours(0, 0, 0, 0);
 
@@ -94,7 +95,7 @@ export const listFollowUps = async (req, res, next) => {
             if (
                 fu.status === "Upcoming" &&
                 fu.dueDate &&
-                new Date(fu.dueDate) < startOfToday   // <-- sirf past dates
+                new Date(fu.dueDate) < startOfToday
             ) {
                 return { ...fu, status: "Missed" };
             }
