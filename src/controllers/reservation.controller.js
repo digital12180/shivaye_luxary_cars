@@ -349,7 +349,7 @@ export const listReservations = async (req, res, next) => {
         if (expiringSoon === "true") {
             const in24h = new Date(Date.now() + 24 * 60 * 60 * 1000);
             filter.expiresAt = { $lte: in24h, $gte: new Date() };
-            filter.status = "Active";
+            filter.status = "Active";   // <-- status overwrite
         }
 
         if (search) {
@@ -363,10 +363,19 @@ export const listReservations = async (req, res, next) => {
 
         let sortOptions = { createdAt: -1 };
         if (sort === "recent") sortOptions = { createdAt: -1 };
-        else if (sort === "deposit_low_high") sortOptions = { reservationAmount: 1 }; // ✅ FIX: schema has reservationAmount, not depositAmount
+        else if (sort === "deposit_low_high") sortOptions = { reservationAmount: 1 };
         else if (sort === "deposit_high_low") sortOptions = { reservationAmount: -1 };
 
-        const [data, total] = await Promise.all([
+        // ✅ Counts filter — status hata do (query param ho ya expiringSoon se set)
+        const countsFilter = { ...filter };
+        delete countsFilter.status;
+
+        const STATUSES = [
+            "Active", "Converted", "Cancelled", "Expired",
+            "Completed", "Confirmed", "Refunded",
+        ];
+
+        const [data, total, statusAgg] = await Promise.all([
             Reservation.find(filter)
                 .populate("customer", "name phone email city")
                 .populate("vehicle", "stockId brand model year askingPrice images slug status")
@@ -375,11 +384,26 @@ export const listReservations = async (req, res, next) => {
                 .skip((page - 1) * limit)
                 .limit(limit),
             Reservation.countDocuments(filter),
+            Reservation.aggregate([
+                { $match: countsFilter },
+                { $group: { _id: "$status", count: { $sum: 1 } } },
+            ]),
         ]);
+
+        // ✅ Zero-fill counts
+        const counts = STATUSES.reduce((acc, s) => {
+            acc[s] = 0;
+            return acc;
+        }, {});
+
+        statusAgg.forEach(({ _id, count }) => {
+            if (_id) counts[_id] = count;
+        });
 
         return ok(res, {
             data,
             pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+            counts,
         });
     } catch (err) {
         next(err);
