@@ -7,6 +7,7 @@ import Vehicle from "../models/Vehicle.js";
 import Customer from "../models/Customer.js";
 import Lead from "../models/Lead.js";
 import LeadActivity from "../models/leadActivity.js";
+import Sale from "../models/Sale.js";
 import { ok, fail } from "../utils/response.js";
 import { notifyPaymentSuccess } from "../services/notification.service.js"
 import { configDotenv } from "dotenv";
@@ -473,7 +474,86 @@ export const verifyPayment = async (req, res, next) => {
     reservation.confirmedAt = new Date();
     reservation.payment = payment._id;
     await reservation.save({ session });
+    /* STEP 5: Create Sale record */
+    const populatedVehicle = await Vehicle.findById(reservation.vehicle).session(session);
+    const populatedCustomer = await Customer.findById(reservation.customer).session(session);
+    if (!populatedVehicle || !populatedCustomer) {
+      throw new Error("Vehicle or Customer not found for Sale");
+    }
 
+    const sale = await Sale.create([{
+      vehicle: populatedVehicle._id,
+      customer: populatedCustomer._id,
+      lead: reservation.lead || null,
+      reservation: reservation._id,
+      campaign: reservation.campaign || null,
+      salesExecutive: reservation.assignedTo || req.user._id,
+
+      vehicleSnapshot: {
+        stockId: populatedVehicle.stockId || null,
+        brand: populatedVehicle.brand,
+        model: populatedVehicle.model,
+        variant: populatedVehicle.variant || null,
+        year: populatedVehicle.year,
+        fuelType: populatedVehicle.fuelType || null,
+        transmission: populatedVehicle.transmission || null,
+        color: populatedVehicle.color || null,
+        registrationNumber: populatedVehicle.registrationNumber || null,
+        kilometersAtSale: populatedVehicle.kilometers || 0,
+      },
+
+      buyerSnapshot: {
+        name: populatedCustomer.name,
+        phone: populatedCustomer.phone,
+        email: populatedCustomer.email || null,
+        city: populatedCustomer.city || null,
+        state: populatedCustomer.state || null,
+        address: populatedCustomer.address || null,
+        pincode: populatedCustomer.pincode || null,
+      },
+
+      pricing: {
+        originalPrice: populatedVehicle.askingPrice,
+        discount: 0,
+        finalSalePrice: reservation.reservationAmount,   // ⚠️ ya vehicle.askingPrice?
+        bookingAmount: reservation.reservationAmount,
+        amountPaid: payment.amount,
+        amountDue: Math.max(0, reservation.reservationAmount - payment.amount),
+        paymentStatus: "paid",
+        paymentMethod: mapPaymentMethod(rzPayment.method),
+      },
+
+      saleType: "full_payment",
+      saleDate: new Date(),
+      source: lead?.source || "direct_website",
+      deliveryStatus: "pending",
+
+      createdBy: req.user._id,
+      updatedBy: req.user._id,
+    }], { session });
+
+    // Vehicle status "Sold" karo
+    populatedVehicle.status = "Sold";
+    populatedVehicle.soldAt = new Date();
+    populatedVehicle.soldTo = populatedCustomer._id;
+    await populatedVehicle.save({ session });
+
+    /* STEP 6: Update Lead pipeline */
+    if (reservation.lead) {
+      await Lead.findByIdAndUpdate(
+        reservation.lead,
+        { status: "Won" },   // <-- "Booked" se "Won" karo
+        { session }
+      );
+      await LeadActivity.create([{
+        lead: reservation.lead,
+        customer: reservation.customer,
+        type: "payment",
+        title: "Reservation payment received - Lead Won",
+        description: `Amount: ₹${payment.amount} (${payment.paymentId})`,
+        meta: { paymentId: payment._id, amount: payment.amount, saleId: sale[0]._id },
+      }], { session });
+    }
     /* STEP 5: Update Lead pipeline */
     if (reservation.lead) {
       await Lead.findByIdAndUpdate(

@@ -3,27 +3,6 @@ import Lead from "../models/Lead.js";
 import { ok, fail } from "../utils/response.js";
 import { uploadToCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js";
 
-// GET /api/v1/campaigns/public/active
-// export const getActiveCampaigns = async (req, res, next) => {
-//     try {
-//         const now = new Date();
-
-//         // Sirf Active campaigns fetch karne ke liye
-//         const campaigns = await Campaign.find({
-//             isActive: true,
-//             status: "Active",
-//             startDate: { $lte: now }, // Start date aaj ya usse pehle ki ho
-//             endDate: { $gte: now },   // End date aaj ya uske baad ki ho
-//         })
-//             .sort("-startDate") // Latest start date wale pehle aayenge
-//             .select("-metrics -spend -budget -createdBy -updatedBy"); // Unwanted fields hide kiye
-
-//         return ok(res, campaigns);
-//     } catch (err) {
-//         next(err);
-//     }
-// };
-
 export const getActiveCampaigns = async (req, res, next) => {
     try {
         const now = new Date();
@@ -84,7 +63,6 @@ export const getPublicCampaign = async (req, res, next) => {
 };
 
 /* ================= CRM ================= */
-
 
 export const listCampaigns = async (req, res, next) => {
     try {
