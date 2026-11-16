@@ -73,25 +73,23 @@ export const listVehicles = async (req, res, next) => {
                 { model: new RegExp(search, "i") },
                 { variant: new RegExp(search, "i") },
                 { description: new RegExp(search, "i") },
-                { stockId: new RegExp(search, "i") }, // Added stockId to search (SH-08115)
+                { stockId: new RegExp(search, "i") },
             ];
         }
 
         // ✅ SORTING LOGIC (Matching Frontend Dropdown)
-        let sortOptions = { createdAt: -1 }; // Default: Most recent
+        let sortOptions = { createdAt: -1 };
 
         switch (sort) {
             case "recent":
                 sortOptions = { createdAt: -1 };
                 break;
-            case "name_asc": // For "Sort: Name A-Z"
-                sortOptions = { brand: 1, model: 1 }; // Sort by Brand then Model
+            case "name_asc":
+                sortOptions = { brand: 1, model: 1 };
                 break;
-            case "price_low_high": // For "Sort: Price low-high"
+            case "price_low_high":
                 sortOptions = { askingPrice: 1 };
                 break;
-
-            // Optional: If you add more options later
             case "price_high_low":
                 sortOptions = { askingPrice: -1 };
                 break;
@@ -102,19 +100,40 @@ export const listVehicles = async (req, res, next) => {
                 sortOptions = { createdAt: -1 };
         }
 
-        const [data, total] = await Promise.all([
+        // ✅ Counts filter — status hata do (default $in bhi hat jaye)
+        const countsFilter = { ...filter };
+        delete countsFilter.status;
+
+        const STATUSES = ["Available", "Reserved", "Booked", "Sold", "Inactive"];
+
+        const [data, total, statusAgg] = await Promise.all([
             Vehicle.find(filter)
                 .populate("brandRef", "name logo slug")
                 .populate("categoryRef", "name slug")
-                .sort(sortOptions) // ✅ Applied dynamic sorting here
+                .sort(sortOptions)
                 .skip((page - 1) * limit)
                 .limit(limit),
             Vehicle.countDocuments(filter),
+            Vehicle.aggregate([
+                { $match: countsFilter },
+                { $group: { _id: "$status", count: { $sum: 1 } } },
+            ]),
         ]);
+
+        // ✅ Zero-fill counts
+        const counts = STATUSES.reduce((acc, s) => {
+            acc[s] = 0;
+            return acc;
+        }, {});
+
+        statusAgg.forEach(({ _id, count }) => {
+            if (_id) counts[_id] = count;
+        });
 
         return ok(res, {
             data,
             pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+            counts,
         });
     } catch (err) {
         next(err);
