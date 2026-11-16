@@ -163,183 +163,46 @@ export const listCustomers = async (req, res, next) => {
         else if (sort === "recent") sortOptions = { createdAt: -1 };
 
         // ==========================================
-        // 3. AGGREGATION PIPELINE
+        // 3. AGGREGATION PIPELINE  (same as before)
         // ==========================================
         const pipeline = [
             { $match: matchFilter },
             { $sort: sortOptions },
             { $skip: skip },
             { $limit: limit },
-
-            // --- Populate Saved Cars ---
-            {
-                $lookup: {
-                    from: "vehicles",
-                    localField: "savedCars",
-                    foreignField: "_id",
-                    as: "savedCars",
-                    pipeline: [
-                        { $project: { brand: 1, model: 1, year: 1, price: 1, images: 1, slug: 1, status: 1 } }
-                    ]
-                }
-            },
-
-            // --- Populate CreatedBy (User) ---
-            {
-                $lookup: {
-                    from: "users",
-                    localField: "createdBy",
-                    foreignField: "_id",
-                    as: "createdBy",
-                    pipeline: [{ $project: { name: 1, email: 1, role: 1 } }]
-                }
-            },
-            { $unwind: { path: "$createdBy", preserveNullAndEmptyArrays: true } },
-
-            // --- Populate UpdatedBy (User) ---
-            {
-                $lookup: {
-                    from: "users",
-                    localField: "updatedBy",
-                    foreignField: "_id",
-                    as: "updatedBy",
-                    pipeline: [{ $project: { name: 1, email: 1, role: 1 } }]
-                }
-            },
-            { $unwind: { path: "$updatedBy", preserveNullAndEmptyArrays: true } },
-
-            // --- Attach Enquiries Count ---
-            {
-                $lookup: {
-                    from: "leads",
-                    localField: "_id",
-                    foreignField: "customer",
-                    as: "enquiries",
-                    pipeline: [{ $match: { deletedAt: null } }, { $count: "count" }]
-                }
-            },
-
-            // --- Attach Appointments Count ---
-            {
-                $lookup: {
-                    from: "appointments",
-                    localField: "_id",
-                    foreignField: "customer",
-                    as: "appointments",
-                    pipeline: [{ $match: { deletedAt: null } }, { $count: "count" }]
-                }
-            },
-
-            // --- Attach Purchased Vehicle (Sold) ---
-            {
-                $lookup: {
-                    from: "vehicles",
-                    localField: "_id",
-                    foreignField: "soldTo",
-                    as: "purchasedVehicle",
-                    pipeline: [
-                        { $match: { status: "Sold", deletedAt: null } },
-                        { $project: { brand: 1, model: 1, year: 1, soldPrice: 1 } },
-                        { $limit: 1 }
-                    ]
-                }
-            },
-
-            // --- NEW: Attach Reserved Cars (active reservations) ---
-            // Uses Reservation collection so we capture ALL reserved vehicles,
-            // not just the ones where Vehicle.soldTo happens to be set.
-            {
-                $lookup: {
-                    from: "reservations",
-                    localField: "_id",
-                    foreignField: "customer",
-                    as: "reservedVehicles",
-                    pipeline: [
-                        {
-                            $match: {
-                                status: { $in: ["Pending", "Confirmed", "Active", "Completed"] },
-                                deletedAt: null,
-                            }
-                        },
-                        // Join each reservation to its vehicle
-                        {
-                            $lookup: {
-                                from: "vehicles",
-                                localField: "vehicle",
-                                foreignField: "_id",
-                                as: "vehicleDoc",
-                                pipeline: [
-                                    {
-                                        $project: {
-                                            brand: 1, model: 1, year: 1,
-                                            askingPrice: 1, images: 1,
-                                            slug: 1, status: 1,
-                                        }
-                                    }
-                                ]
-                            }
-                        },
-                        { $unwind: { path: "$vehicleDoc", preserveNullAndEmptyArrays: true } },
-                        // Shape the reserved vehicle entry
-                        {
-                            $project: {
-                                _id: 1,
-                                reservationNumber: 1,
-                                status: 1,
-                                reservedAt: 1,
-                                expiresAt: 1,
-                                amount: 1,
-                                vehicle: "$vehicleDoc",
-                            }
-                        },
-                    ]
-                }
-            },
-
-            // --- Format Final Document ---
-            {
-                $addFields: {
-                    enquiriesCount: { $ifNull: [{ $arrayElemAt: ["$enquiries.count", 0] }, 0] },
-                    appointmentsCount: { $ifNull: [{ $arrayElemAt: ["$appointments.count", 0] }, 0] },
-                    purchasedVehicle: {
-                        $let: {
-                            vars: { pv: { $arrayElemAt: ["$purchasedVehicle", 0] } },
-                            in: {
-                                $cond: [
-                                    { $ifNull: ["$$pv", false] },
-                                    { $concat: ["$$pv.brand", " ", "$$pv.model"] },
-                                    null
-                                ]
-                            }
-                        }
-                    },
-                    // NEW: Reserved car summary
-                    reservedVehicles: { $ifNull: ["$reservedVehicles", []] },
-                    reservedCount: { $size: { $ifNull: ["$reservedVehicles", []] } },
-                    hasReservedVehicle: {
-                        $gt: [{ $size: { $ifNull: ["$reservedVehicles", []] } }, 0]
-                    },
-                }
-            },
-
-            // --- Remove temporary lookup arrays ---
-            {
-                $project: {
-                    enquiries: 0,
-                    appointments: 0,
-                    purchasedVehicle: 0,
-                    password: 0,
-                    otp: 0,
-                    refreshTokenHash: 0,
-                }
-            }
         ];
 
-        // Run Data & Count in parallel
-        const [data, total] = await Promise.all([
+        // ==========================================
+        // 4. COUNTS FILTER — interestedIn hata do
+        // ==========================================
+        const countsFilter = { ...matchFilter };
+        delete countsFilter.interestedIn;
+
+        const INTERESTED_IN = ["buy", "sell", "find", "other"];
+
+        // ==========================================
+        // 5. RUN ALL THREE IN PARALLEL
+        // ==========================================
+        const [data, total, interestAgg] = await Promise.all([
             Customer.aggregate(pipeline),
-            Customer.countDocuments(matchFilter)
+            Customer.countDocuments(matchFilter),
+            Customer.aggregate([
+                { $match: countsFilter },
+                { $group: { _id: "$interestedIn", count: { $sum: 1 } } },
+            ]),
         ]);
+
+        // ==========================================
+        // 6. ZERO-FILL COUNTS
+        // ==========================================
+        const counts = INTERESTED_IN.reduce((acc, k) => {
+            acc[k] = 0;
+            return acc;
+        }, {});
+
+        interestAgg.forEach(({ _id, count }) => {
+            if (_id) counts[_id] = count;
+        });
 
         return ok(res, {
             data,
@@ -349,6 +212,7 @@ export const listCustomers = async (req, res, next) => {
                 limit,
                 pages: Math.ceil(total / limit)
             },
+            counts,   // <-- add kiya
         });
 
     } catch (err) {
