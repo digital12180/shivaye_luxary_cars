@@ -134,7 +134,6 @@ export const getAllSellRequests = async (req, res) => {
         const query = {};
 
         // 🔥 FIX: Soft delete filter explicitly add karein
-        // Taaki countDocuments aur find() dono exact same records par kaam karein
         query.deletedAt = null;
 
         if (status && status !== "All Statuses") query.status = status;
@@ -150,15 +149,38 @@ export const getAllSellRequests = async (req, res) => {
             ];
         }
 
-        const [requests, total] = await Promise.all([
+        // ✅ Counts filter — status hata do
+        const countsFilter = { ...query };
+        delete countsFilter.status;
+
+        const STATUSES = [
+            "New", "Contacted", "Inspection Scheduled",
+            "Offer Made", "Purchased", "Rejected",
+        ];
+
+        const [requests, total, statusAgg] = await Promise.all([
             SellRequest.find(query)
                 .sort({ createdAt: -1 })
                 .skip((page - 1) * limit)
                 .limit(limit),
 
-            // Count ab exactly same query par hoga
             SellRequest.countDocuments(query),
+
+            SellRequest.aggregate([
+                { $match: countsFilter },
+                { $group: { _id: "$status", count: { $sum: 1 } } },
+            ]),
         ]);
+
+        // ✅ Zero-fill counts
+        const counts = STATUSES.reduce((acc, s) => {
+            acc[s] = 0;
+            return acc;
+        }, {});
+
+        statusAgg.forEach(({ _id, count }) => {
+            if (_id) counts[_id] = count;
+        });
 
         res.status(200).json({
             success: true,
@@ -166,8 +188,9 @@ export const getAllSellRequests = async (req, res) => {
             pagination: {
                 total,
                 page,
-                pages: Math.ceil(total / limit)
+                pages: Math.ceil(total / limit),
             },
+            counts,
         });
     } catch (error) {
         console.error("Get Sell Requests Error:", error);

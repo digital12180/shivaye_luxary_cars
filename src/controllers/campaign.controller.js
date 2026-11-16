@@ -94,8 +94,7 @@ export const listCampaigns = async (req, res, next) => {
 
         const filter = {};
 
-        // 🔥 FIX: Soft delete filter explicitly add karein
-        // Taaki countDocuments aur find() dono exact same records par kaam karein
+        // 🔥 Soft delete filter
         filter.deletedAt = null;
 
         // Status Filter
@@ -111,21 +110,37 @@ export const listCampaigns = async (req, res, next) => {
             ];
         }
 
-        // UPDATED: Sort by startDate (Ascending: 1)
-        // Isse October wali campaign pehle aayegi, phir November wali
-        let sortOption = { startDate: 1 };
+        // ✅ Counts filter — status hata do
+        const countsFilter = { ...filter };
+        delete countsFilter.status;
 
-        const [data, total] = await Promise.all([
+        const STATUSES = ["Draft", "Active", "Paused", "Ended"];
+
+        const [data, total, statusAgg] = await Promise.all([
             Campaign.find(filter)
                 .populate("createdBy", "name")
                 .populate("updatedBy", "name")
-                .sort(sortOption)
+                .sort({ startDate: 1 })
                 .skip((page - 1) * limit)
                 .limit(limit),
 
-            // Count ab exactly same filter par hoga
             Campaign.countDocuments(filter),
+
+            Campaign.aggregate([
+                { $match: countsFilter },
+                { $group: { _id: "$status", count: { $sum: 1 } } },
+            ]),
         ]);
+
+        // ✅ Zero-fill counts
+        const counts = STATUSES.reduce((acc, s) => {
+            acc[s] = 0;
+            return acc;
+        }, {});
+
+        statusAgg.forEach(({ _id, count }) => {
+            if (_id) counts[_id] = count;
+        });
 
         return ok(res, {
             data,
@@ -133,8 +148,9 @@ export const listCampaigns = async (req, res, next) => {
                 total,
                 page,
                 limit,
-                pages: Math.ceil(total / limit)
+                pages: Math.ceil(total / limit),
             },
+            counts,
         });
     } catch (err) {
         next(err);
