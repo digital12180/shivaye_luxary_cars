@@ -158,7 +158,13 @@ export const listAppointments = async (req, res, next) => {
             filter.status = { $in: ["Requested", "Confirmed"] };
         }
 
-        const [data, total] = await Promise.all([
+        // ✅ Counts filter — status hata do (query param ho ya upcoming se set)
+        const countsFilter = { ...filter };
+        delete countsFilter.status;
+
+        const STATUSES = ["Requested", "Confirmed", "Completed", "Rescheduled", "Cancelled"];
+
+        const [data, total, statusAgg] = await Promise.all([
             Appointment.find(filter)
                 .populate({
                     path: "lead",
@@ -172,11 +178,26 @@ export const listAppointments = async (req, res, next) => {
                 .skip((page - 1) * limit)
                 .limit(limit),
             Appointment.countDocuments(filter),
+            Appointment.aggregate([
+                { $match: countsFilter },
+                { $group: { _id: "$status", count: { $sum: 1 } } },
+            ]),
         ]);
+
+        // ✅ Zero-fill counts
+        const counts = STATUSES.reduce((acc, s) => {
+            acc[s] = 0;
+            return acc;
+        }, {});
+
+        statusAgg.forEach(({ _id, count }) => {
+            if (_id) counts[_id] = count;
+        });
 
         return ok(res, {
             data,
             pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+            counts,
         });
     } catch (err) {
         next(err);
