@@ -3,12 +3,16 @@ import FollowUp from "../models/followUp.js";
 
 export const markOverdueFollowUps = async () => {
     try {
-        const now = new Date();
+        // Aaj ka start (00:00:00.000)
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
 
+        // Sirf woh Missed karo jinki dueDate aaj se pehle ki hai
+        // (aaj wale abhi "Upcoming" rahenge, kal subah se Missed honge)
         const result = await FollowUp.updateMany(
             {
                 status: "Upcoming",
-                dueDate: { $lt: now },
+                dueDate: { $lt: startOfToday },   // <-- kal se pehle wale
                 deletedAt: null,
             },
             { $set: { status: "Missed" } }
@@ -21,7 +25,6 @@ export const markOverdueFollowUps = async () => {
         console.error("[cron] markOverdueFollowUps failed:", err);
     }
 };
-
 export const startMissedFollowUpJob = () => {
     // Har 15 minute me chalao
     cron.schedule("*/15 * * * *", markOverdueFollowUps);

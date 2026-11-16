@@ -86,9 +86,16 @@ export const listFollowUps = async (req, res, next) => {
         ]);
 
         // Defensive: overdue "Upcoming" ko "Missed" dikhao
-        const now = new Date();
+        // ✅ Naya
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+
         data = data.map((fu) => {
-            if (fu.status === "Upcoming" && fu.dueDate && new Date(fu.dueDate) < now) {
+            if (
+                fu.status === "Upcoming" &&
+                fu.dueDate &&
+                new Date(fu.dueDate) < startOfToday   // <-- sirf past dates
+            ) {
                 return { ...fu, status: "Missed" };
             }
             return fu;
@@ -115,8 +122,17 @@ export const createFollowUp = async (req, res, next) => {
         if (!lead) return fail(res, "Lead not found", 404);
 
         // Auto-missed agar dueDate past me hai
-        const isOverdue = new Date(dueDate) < new Date();
-        const finalStatus = status || (isOverdue ? "Missed" : "Upcoming");
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+
+        // Agar dueDate past me hai (kal se pehle) aur status Upcoming hai -> reject
+        if (status === "Upcoming" && new Date(dueDate) < startOfToday) {
+            return fail(res, "Upcoming follow-up ki due date aaj ya future me honi chahiye", 400);
+        }
+
+        // Auto-missed agar dueDate kal se pehle ki hai
+        const isPast = new Date(dueDate) < startOfToday;
+        const finalStatus = status || (isPast ? "Missed" : "Upcoming");
 
         const followUp = await FollowUp.create({
             lead: lead._id,
@@ -149,31 +165,45 @@ export const updateFollowUp = async (req, res, next) => {
         const followUp = await FollowUp.findById(req.params.id);
         if (!followUp) return fail(res, "Follow-up not found", 404);
 
+        // ── 1. Validation PEHLE (save se pehle) ──────────────────
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+
+        const effectiveDueDate = dueDate ? new Date(dueDate) : followUp.dueDate;
+        const effectiveStatus = status || followUp.status;
+
+        if (
+            effectiveStatus === "Upcoming" &&
+            effectiveDueDate < startOfToday
+        ) {
+            return fail(
+                res,
+                "Upcoming follow-up ki due date aaj ya future me honi chahiye",
+                400
+            );
+        }
+
+        // ── 2. Fields update karo ────────────────────────────────
         if (dueDate) followUp.dueDate = new Date(dueDate);
         if (time) followUp.time = time;
         if (status) followUp.status = status;
         if (nextAction) followUp.nextAction = nextAction;
         if (assignedTo) followUp.assignedTo = assignedTo;
 
-        // Re-evaluate: agar Upcoming hai par date past me chali gayi -> Missed
-        if (
-            followUp.status === "Upcoming" &&
-            followUp.dueDate &&
-            followUp.dueDate < new Date()
-        ) {
-            followUp.status = "Missed";
-        }
-
         followUp.updatedBy = req.user._id;
         await followUp.save();
 
-        // Sync with Lead's nextFollowUpAt
+        // ── 3. Lead ka nextFollowUpAt sync karo ─────────────────
         const lead = await Lead.findById(followUp.lead);
         if (lead) {
             if (followUp.status === "Upcoming") {
                 lead.nextFollowUpAt = followUp.dueDate;
-            } else if (lead.nextFollowUpAt && lead.nextFollowUpAt.getTime() === followUp.dueDate.getTime()) {
-                // Agar yahi follow-up lead ka next tha aur ab Missed ho gaya -> clear
+            } else if (
+                lead.nextFollowUpAt &&
+                followUp.dueDate &&
+                lead.nextFollowUpAt.getTime() === followUp.dueDate.getTime()
+            ) {
+                // Yeh hi follow-up lead ka "next" tha, ab Missed/Completed ho gaya -> clear
                 lead.nextFollowUpAt = null;
             }
             await lead.save();
