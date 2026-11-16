@@ -57,7 +57,7 @@ export const listFollowUps = async (req, res, next) => {
         const { status, leadId, assignedTo, dueDate } = req.query;
 
         const filter = {
-            deletedAt: null,   // <-- ADD: soft-deleted records exclude karo
+            deletedAt: null,
         };
         if (status) filter.status = status;
         if (leadId) filter.lead = leadId;
@@ -71,7 +71,13 @@ export const listFollowUps = async (req, res, next) => {
             filter.dueDate = { $gte: start, $lte: end };
         }
 
-        let [data, total] = await Promise.all([
+        // ✅ Counts filter — status hata do, taaki har status ka count mile
+        const countsFilter = { ...filter };
+        delete countsFilter.status;
+
+        const STATUSES = ["Upcoming", "Completed", "Missed", "Cancelled"];
+
+        const [rawData, total, statusAgg] = await Promise.all([
             FollowUp.find(filter)
                 .populate({
                     path: "lead",
@@ -84,14 +90,18 @@ export const listFollowUps = async (req, res, next) => {
                 .skip((page - 1) * limit)
                 .limit(limit)
                 .lean(),
-            FollowUp.countDocuments(filter),   // <-- same filter, deleted excluded
+            FollowUp.countDocuments(filter),
+            FollowUp.aggregate([
+                { $match: countsFilter },
+                { $group: { _id: "$status", count: { $sum: 1 } } },
+            ]),
         ]);
 
-        // Defensive: overdue "Upcoming" ko "Missed" dikhao
+        // ── Defensive: overdue "Upcoming" → "Missed" (list ke liye) ──
         const startOfToday = new Date();
         startOfToday.setHours(0, 0, 0, 0);
 
-        data = data.map((fu) => {
+        const data = rawData.map((fu) => {
             if (
                 fu.status === "Upcoming" &&
                 fu.dueDate &&
@@ -102,9 +112,33 @@ export const listFollowUps = async (req, res, next) => {
             return fu;
         });
 
+        // ── Counts build karo (same defensive shift apply) ──
+        const counts = STATUSES.reduce((acc, s) => {
+            acc[s] = 0;
+            return acc;
+        }, {});
+
+        statusAgg.forEach(({ _id, count }) => {
+            if (!_id) return;
+            counts[_id] = count;
+        });
+
+        // ✅ Defensive shift counts me bhi: overdue Upcoming ko Missed me move karo
+        const overdueUpcomingCount = await FollowUp.countDocuments({
+            ...countsFilter,
+            status: "Upcoming",
+            dueDate: { $lt: startOfToday },
+        });
+
+        if (overdueUpcomingCount > 0) {
+            counts.Upcoming = Math.max(0, counts.Upcoming - overdueUpcomingCount);
+            counts.Missed = counts.Missed + overdueUpcomingCount;
+        }
+
         return ok(res, {
             data,
             pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+            counts,
         });
     } catch (err) {
         next(err);
