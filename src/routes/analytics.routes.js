@@ -14,7 +14,8 @@ import {
     getCampaignAnalytics,
     getFollowUpAnalytics,
     getDashboardData,
-    getLocationAnalytics
+    getLocationAnalytics,
+    exportDashboardCSV
 } from "../controllers/analytics.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 
@@ -118,5 +119,7 @@ router.get(
     restrictTo("admin", "marketing_manager", "sales_manager"),
     getCampaignAnalytics
 );
+
+router.get("/dashboard/export/csv", verifyJWT, exportDashboardCSV);
 
 export default router;

@@ -1256,3 +1256,211 @@ export const getLocationAnalytics = async (req, res, next) => {
         next(err);
     }
 };
+
+
+const esc = (val) => {
+  if (val === null || val === undefined) return "";
+  let s = String(val);
+  if (s.includes('"') || s.includes(",") || s.includes("\n") || s.includes("\r")) {
+    s = '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+};
+
+const row = (arr) => arr.map(esc).join(",");
+const fmtDate = (d) => (d ? new Date(d).toISOString() : "");
+export const exportDashboardCSV = async (req, res, next) => {
+  try {
+    const now = new Date();
+    const todayStart = getStartOfDay(now);
+    const todayEnd   = getEndOfDay(now);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+    // ---------- 1. KPI aggregates (same queries as getDashboardData) ----------
+    const [
+      liveInventoryCount,
+      availableCars,
+      reservedCars,
+      soldCars,
+      openOpportunities,
+      newEnquiriesToday,
+      overdueFollowUps,
+      totalReservations,
+      pendingPayments,
+      salesRevenueAgg,
+      completedSalesCount,
+      totalLeadsCount,
+    ] = await Promise.all([
+      Vehicle.countDocuments({ status: { $in: ["Available", "Reserved", "Booked"] } }),
+      Vehicle.countDocuments({ status: "Available" }),
+      Vehicle.countDocuments({ status: "Reserved" }),
+      Vehicle.countDocuments({ status: "Sold" }),
+      Lead.countDocuments({ status: { $nin: ["Won", "Lost"] } }),
+      Lead.countDocuments({ createdAt: { $gte: todayStart, $lte: todayEnd } }),
+      Lead.countDocuments({ status: { $nin: ["Won", "Lost"] }, nextFollowUpAt: { $lt: now } }),
+      Reservation.countDocuments({ status: "Confirmed" }),
+      Reservation.countDocuments({ paymentStatus: "Pending" }),
+      Sale.aggregate([
+        { $match: { status: "Completed" } },
+        { $group: { _id: null, total: { $sum: "$pricing.finalSalePrice" } } },
+      ]),
+      Sale.countDocuments({ status: "Completed" }),
+      Lead.countDocuments({}),
+    ]);
+
+    const salesRevenue = salesRevenueAgg[0]?.total || 0;
+    const conversionRate = totalLeadsCount
+      ? Number(((completedSalesCount / totalLeadsCount) * 100).toFixed(1))
+      : 0;
+
+    // ---------- 2. Momentum (5-day buckets) ----------
+    const momentumData = await Lead.aggregate([
+      { $match: { createdAt: { $gte: startOfMonth, $lte: endOfMonth } } },
+      {
+        $group: {
+          _id: {
+            $subtract: [
+              { $dayOfMonth: "$createdAt" },
+              { $mod: [{ $subtract: [{ $dayOfMonth: "$createdAt" }, 1] }, 5] },
+            ],
+          },
+          qualifiedLeads: {
+            $sum: {
+              $cond: [
+                { $in: ["$status", ["Qualified", "Test Drive", "Visit Scheduled", "Negotiation", "Reserved", "Booked", "Won"]] },
+                1,
+                0,
+              ],
+            },
+          },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    const soldMomentum = await Sale.aggregate([
+      { $match: { saleDate: { $gte: startOfMonth, $lte: endOfMonth } } },
+      {
+        $group: {
+          _id: {
+            $subtract: [
+              { $dayOfMonth: "$saleDate" },
+              { $mod: [{ $subtract: [{ $dayOfMonth: "$saleDate" }, 1] }, 5] },
+            ],
+          },
+          vehiclesSold: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    const periods = [
+      { period: "1-5",   qualifiedLeads: 0, vehiclesSold: 0 },
+      { period: "6-10",  qualifiedLeads: 0, vehiclesSold: 0 },
+      { period: "11-15", qualifiedLeads: 0, vehiclesSold: 0 },
+      { period: "16-20", qualifiedLeads: 0, vehiclesSold: 0 },
+      { period: "21-25", qualifiedLeads: 0, vehiclesSold: 0 },
+      { period: "26-31", qualifiedLeads: 0, vehiclesSold: 0 },
+    ];
+    const bucket = (d) =>
+      d <= 5 ? 0 : d <= 10 ? 1 : d <= 15 ? 2 : d <= 20 ? 3 : d <= 25 ? 4 : 5;
+
+    momentumData.forEach((i) => { periods[bucket(i._id)].qualifiedLeads = i.qualifiedLeads; });
+    soldMomentum.forEach((i) => { periods[bucket(i._id)].vehiclesSold   = i.vehiclesSold;   });
+
+    // ---------- 3. Enquiry sources (top 6) ----------
+    const enquirySources = await Lead.aggregate([
+      { $group: { _id: "$source", count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 6 },
+    ]);
+
+    // ---------- 4. Latest opportunities ----------
+    const latestOpportunities = await Lead.find()
+      .sort("-createdAt")
+      .limit(5)
+      .populate("customer", "name customerNumber")
+      .populate("assignedTo", "name")
+      .select("interestedVehicle status customer assignedTo createdAt")
+      .lean();
+
+    // ---------- 5. Showroom activity ----------
+    const showroomActivity = await Lead.find()
+      .sort("-updatedAt")
+      .limit(4)
+      .populate("customer", "name")
+      .select("status customer updatedAt")
+      .lean();
+
+    // ---------- Build multi-section CSV ----------
+    const lines = [];
+
+    // Header block
+    lines.push(row(["Dashboard Export"]));
+    lines.push(row(["Generated At", fmtDate(now)]));
+    lines.push("");
+
+    // KPIs
+    lines.push(row(["--- KPIs ---"]));
+    lines.push(row(["Metric", "Value"]));
+    lines.push(row(["Live Inventory — Total",      liveInventoryCount]));
+    lines.push(row(["Live Inventory — Available",  availableCars]));
+    lines.push(row(["Live Inventory — Reserved",   reservedCars]));
+    lines.push(row(["Live Inventory — Sold",       soldCars]));
+    lines.push(row(["Open Opportunities",          openOpportunities]));
+    lines.push(row(["New Enquiries Today",         newEnquiriesToday]));
+    lines.push(row(["Overdue Follow-ups",          overdueFollowUps]));
+    lines.push(row(["Reservations — Confirmed",    totalReservations]));
+    lines.push(row(["Reservations — Pending Pay",  pendingPayments]));
+    lines.push(row(["Sales Revenue",               salesRevenue]));
+    lines.push(row(["Completed Sales",             completedSalesCount]));
+    lines.push(row(["Conversion Rate (%)",         conversionRate]));
+    lines.push("");
+
+    // Momentum
+    lines.push(row(["--- Lead & Sale Momentum (This Month) ---"]));
+    lines.push(row(["Period", "Qualified Leads", "Vehicles Sold"]));
+    periods.forEach((p) => lines.push(row([p.period, p.qualifiedLeads, p.vehiclesSold])));
+    lines.push("");
+
+    // Enquiry sources
+    lines.push(row(["--- Top Enquiry Sources ---"]));
+    lines.push(row(["Source", "Count"]));
+    enquirySources.forEach((s) => lines.push(row([s._id || "unknown", s.count])));
+    lines.push("");
+
+    // Latest opportunities
+    lines.push(row(["--- Latest Opportunities ---"]));
+    lines.push(row(["Lead / Customer", "Interested In", "Status", "Assigned To", "Created At"]));
+    latestOpportunities.forEach((l) =>
+      lines.push(
+        row([
+          l.customer?.name || "",
+          l.interestedVehicle || "",
+          l.status || "",
+          l.assignedTo?.name || "",
+          fmtDate(l.createdAt),
+        ])
+      )
+    );
+    lines.push("");
+
+    // Showroom activity
+    lines.push(row(["--- Showroom Activity ---"]));
+    lines.push(row(["Customer", "Status", "Updated At"]));
+    showroomActivity.forEach((s) =>
+      lines.push(row([s.customer?.name || "", s.status || "", fmtDate(s.updatedAt)]))
+    );
+
+    const csv = "\uFEFF" + lines.join("\r\n");
+    const filename = `dashboard_export_${new Date().toISOString().slice(0, 10)}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).send(csv);
+  } catch (err) {
+    next(err);
+  }
+};
