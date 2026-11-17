@@ -14,6 +14,7 @@ import {
     deleteLead,
     getLeadDashboard,
     getSourcePerformance,
+    exportLeadsCSV
 } from "../controllers/lead.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 import { checkPermission } from "../middleware/checkPermission.js"
@@ -115,5 +116,7 @@ router.delete(
     restrictTo("admin", "sales_manager"),
     deleteLead
 );
+
+router.get("/export/csv", verifyJWT, checkPermission('Leads_read'), exportLeadsCSV);
 
 export default router;

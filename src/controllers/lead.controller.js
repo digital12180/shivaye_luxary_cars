@@ -515,57 +515,7 @@ export const updateLead = async (req, res, next) => {
     } catch (err) {
         next(err);
     }
-};
-
-// export const updateLeadStatus = async (req, res, next) => {
-//     try {
-//         const { status, note, lostReason, lostReasonCategory } = req.body;
-
-//         const allowed = Object.keys(STAGE_RANK).concat(["Lost"]);
-//         if (!allowed.includes(status))
-//             return fail(res, "Invalid status", 400);
-
-//         const lead = await Lead.findById(req.params.id);
-//         if (!lead) return fail(res, "Lead not found", 404);
-
-//         if (
-//             req.user.role === "sales_executive" &&
-//             String(lead.assignedTo) !== String(req.user._id)
-//         ) {
-//             return fail(res, "Not authorized", 403);
-//         }
-
-//         // ✅ Forward-only guard (except Lost / Won)
-//         if (status !== "Lost" && status !== "Won") {
-//             const currentRank = STAGE_RANK[lead.status] ?? -1;
-//             const newRank = STAGE_RANK[status] ?? -1;
-//             if (newRank < currentRank) {
-//                 return fail(
-//                     res,
-//                     `Cannot move lead backward from "${lead.status}" to "${status}"`,
-//                     400
-//                 );
-//             }
-//         }
-
-//         lead.status = status;
-//         lead.updatedBy = req.user._id;
-//         lead.stageHistory = lead.stageHistory || [];
-//         lead.stageHistory.push({ stage: status, changedBy: req.user._id, note: note || "" });
-
-//         if (status === "Lost") {
-//             lead.lostReason = lostReason || lead.lostReason;
-//             lead.lostReasonCategory = lostReasonCategory || lead.lostReasonCategory;
-//         }
-
-//         await lead.save();
-//         return ok(res, lead, `Lead marked as ${status}`);
-//     } catch (err) {
-//         next(err);
-//     }
-// };
-
-
+}
 
 export const updateLeadStatus = async (req, res, next) => {
     try {
@@ -886,4 +836,202 @@ export const getSourcePerformance = async (req, res, next) => {
     } catch (err) {
         next(err);
     }
+};
+
+// Field definitions — order matters (column order in CSV)
+const CSV_COLUMNS = [
+  { key: "leadNumber",         label: "Lead Number" },
+  { key: "status",             label: "Status" },
+  { key: "priority",           label: "Priority" },
+  { key: "enquiryType",        label: "Enquiry Type" },
+
+  // Customer
+  { key: "customerName",       label: "Customer Name" },
+  { key: "customerPhone",      label: "Customer Phone" },
+  { key: "customerEmail",      label: "Customer Email" },
+  { key: "city",               label: "City" },
+  { key: "country",            label: "Country" },
+  { key: "state",              label: "State" },
+
+  // Vehicle / requirement
+  { key: "interestedVehicle",  label: "Interested Vehicle" },
+  { key: "brand",              label: "Brand" },
+  { key: "vehicle",            label: "Vehicle" },
+  { key: "budget",             label: "Budget" },
+  { key: "requirement",        label: "Requirement" },
+
+  // Assignment
+  { key: "assignedTo",         label: "Assigned To" },
+  { key: "createdBy",          label: "Created By" },
+  { key: "updatedBy",          label: "Updated By" },
+
+  // Source & campaign
+  { key: "source",             label: "Source" },
+  { key: "campaign",           label: "Campaign" },
+  { key: "utmSource",          label: "UTM Source" },
+  { key: "utmMedium",          label: "UTM Medium" },
+  { key: "utmCampaign",        label: "UTM Campaign" },
+  { key: "utmTerm",            label: "UTM Term" },
+  { key: "utmContent",         label: "UTM Content" },
+  { key: "gclid",              label: "GCLID" },
+  { key: "fbclid",             label: "FBCLID" },
+  { key: "landingPage",        label: "Landing Page" },
+
+  // Dates
+  { key: "firstContactedAt",   label: "First Contacted At" },
+  { key: "lastContactedAt",    label: "Last Contacted At" },
+  { key: "nextFollowUpAt",     label: "Next Follow-up At" },
+  { key: "wonAt",              label: "Won At" },
+  { key: "lostAt",             label: "Lost At" },
+  { key: "closedAt",           label: "Closed At" },
+  { key: "createdAt",          label: "Created At" },
+  { key: "updatedAt",          label: "Updated At" },
+
+  // Deal
+  { key: "dealValue",          label: "Deal Value" },
+  { key: "bookingAmount",      label: "Booking Amount" },
+  { key: "lostReason",         label: "Lost Reason" },
+  { key: "lostReasonCategory", label: "Lost Reason Category" },
+  { key: "notes",              label: "Notes" },
+  { key: "totalActivities",    label: "Total Activities" },
+  { key: "isActive",           label: "Is Active" },
+  { key: "isDuplicate",        label: "Is Duplicate" },
+];
+
+// CSV escaping
+const esc = (val) => {
+  if (val === null || val === undefined) return "";
+  let s = String(val);
+  if (s.includes('"') || s.includes(",") || s.includes("\n") || s.includes("\r")) {
+    s = '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+};
+
+const fmtDate = (d) => (d ? new Date(d).toISOString() : "");
+
+export const exportLeadsCSV = async (req, res) => {
+  try {
+    const {
+      status,
+      source,
+      assignedTo,
+      enquiryType,
+      priority,
+      from,
+      to,
+      search,
+    } = req.query;
+
+    const filter = { deletedAt: null };
+
+    if (status) filter.status = { $in: [].concat(status) };
+    if (source) filter.source = { $in: [].concat(source) };
+    if (priority) filter.priority = { $in: [].concat(priority) };
+    if (enquiryType) filter.enquiryType = { $in: [].concat(enquiryType) };
+    if (assignedTo && mongoose.Types.ObjectId.isValid(assignedTo))
+      filter.assignedTo = assignedTo;
+
+    if (from || to) {
+      filter.createdAt = {};
+      if (from) filter.createdAt.$gte = new Date(from);
+      if (to) filter.createdAt.$lte = new Date(to);
+    }
+
+    if (search) {
+      filter.$or = [
+        { leadNumber: { $regex: search, $options: "i" } },
+        { interestedVehicle: { $regex: search, $options: "i" } },
+        { city: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const leads = await Lead.find(filter)
+      .populate("customer", "name phone email")
+      .populate("brand", "name")
+      .populate("vehicle", "name model registrationNumber")
+      .populate("assignedTo", "name email")
+      .populate("createdBy", "name email")
+      .populate("updatedBy", "name email")
+      .populate("campaign", "name")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Build rows
+    const rows = leads.map((l) => ({
+      leadNumber: l.leadNumber,
+      status: l.status,
+      priority: l.priority,
+      enquiryType: l.enquiryType,
+
+      customerName: l.customer?.name || "",
+      customerPhone: l.customer?.phone || "",
+      customerEmail: l.customer?.email || "",
+      city: l.city || l.location?.city || "",
+      country: l.location?.country || "",
+      state: l.location?.state || "",
+
+      interestedVehicle: l.interestedVehicle,
+      brand: l.brand?.name || "",
+      vehicle: l.vehicle
+        ? `${l.vehicle.name || ""} ${l.vehicle.model || ""}${l.vehicle.registrationNumber ? ` (${l.vehicle.registrationNumber})` : ""}`.trim()
+        : "",
+      budget: l.budget ?? "",
+      requirement: l.requirement || "",
+
+      assignedTo: l.assignedTo?.name || "",
+      createdBy: l.createdBy?.name || "",
+      updatedBy: l.updatedBy?.name || "",
+
+      source: l.source,
+      campaign: l.campaign?.name || "",
+      utmSource: l.attribution?.utmSource || "",
+      utmMedium: l.attribution?.utmMedium || "",
+      utmCampaign: l.attribution?.utmCampaign || "",
+      utmTerm: l.attribution?.utmTerm || "",
+      utmContent: l.attribution?.utmContent || "",
+      gclid: l.attribution?.gclid || "",
+      fbclid: l.attribution?.fbclid || "",
+      landingPage: l.attribution?.landingPage || "",
+
+      firstContactedAt: fmtDate(l.firstContactedAt),
+      lastContactedAt: fmtDate(l.lastContactedAt),
+      nextFollowUpAt: fmtDate(l.nextFollowUpAt),
+      wonAt: fmtDate(l.wonAt),
+      lostAt: fmtDate(l.lostAt),
+      closedAt: fmtDate(l.closedAt),
+      createdAt: fmtDate(l.createdAt),
+      updatedAt: fmtDate(l.updatedAt),
+
+      dealValue: l.dealValue ?? "",
+      bookingAmount: l.bookingAmount ?? "",
+      lostReason: l.lostReason || "",
+      lostReasonCategory: l.lostReasonCategory || "",
+      notes: l.notes || "",
+      totalActivities: l.totalActivities ?? 0,
+      isActive: l.isActive ? "Yes" : "No",
+      isDuplicate: l.isDuplicate ? "Yes" : "No",
+    }));
+
+    const header = CSV_COLUMNS.map((c) => esc(c.label)).join(",");
+    const body = rows
+      .map((r) => CSV_COLUMNS.map((c) => esc(r[c.key])).join(","))
+      .join("\r\n");
+
+    // BOM for Excel UTF-8 compatibility
+    const csv = "\uFEFF" + header + "\r\n" + body;
+
+    const filename = `leads_export_${new Date().toISOString().slice(0, 10)}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${filename}"`
+    );
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).send(csv);
+  } catch (err) {
+    console.error("exportLeadsCSV error:", err);
+    return res.status(500).json({ success: false, message: "Failed to export leads" });
+  }
 };
