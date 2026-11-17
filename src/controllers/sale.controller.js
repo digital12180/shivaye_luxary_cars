@@ -713,3 +713,302 @@ export const getSalesReport = async (req, res, next) => {
         next(err);
     }
 };
+
+// Only important, business-relevant fields
+const CSV_COLUMNS = [
+  { key: "invoiceNumber",        label: "Invoice Number" },
+  { key: "saleDate",             label: "Sale Date" },
+  { key: "saleType",             label: "Sale Type" },
+  { key: "source",               label: "Source" },
+
+  // Vehicle snapshot
+  { key: "stockId",              label: "Stock ID" },
+  { key: "vehicle",              label: "Vehicle" },
+  { key: "registrationNumber",   label: "Registration Number" },
+  { key: "year",                 label: "Year" },
+  { key: "fuelType",             label: "Fuel Type" },
+  { key: "transmission",         label: "Transmission" },
+  { key: "kilometersAtSale",     label: "Kilometers At Sale" },
+
+  // Buyer snapshot
+  { key: "buyerName",            label: "Buyer Name" },
+  { key: "buyerPhone",           label: "Buyer Phone" },
+  { key: "buyerEmail",           label: "Buyer Email" },
+  { key: "buyerCity",            label: "Buyer City" },
+  { key: "buyerState",           label: "Buyer State" },
+
+  // Pricing
+  { key: "originalPrice",        label: "Original Price" },
+  { key: "discount",             label: "Discount" },
+  { key: "finalSalePrice",       label: "Final Sale Price" },
+  { key: "bookingAmount",        label: "Booking Amount" },
+  { key: "amountPaid",           label: "Amount Paid" },
+  { key: "amountDue",            label: "Amount Due" },
+  { key: "paymentStatus",        label: "Payment Status" },
+  { key: "paymentMethod",        label: "Payment Method" },
+
+  // Finance
+  { key: "isFinanced",           label: "Financed" },
+  { key: "financierName",        label: "Financier" },
+  { key: "loanAmount",           label: "Loan Amount" },
+
+  // Exchange
+  { key: "hasExchange",          label: "Exchange" },
+  { key: "exchangeValue",        label: "Exchange Value" },
+
+  // Delivery
+  { key: "deliveryStatus",       label: "Delivery Status" },
+  { key: "deliveryDate",         label: "Delivery Date" },
+
+  // Assignment
+  { key: "salesExecutive",       label: "Sales Executive" },
+  { key: "salesCommission",      label: "Sales Commission" },
+
+  { key: "notes",                label: "Notes" },
+  { key: "createdAt",            label: "Created At" },
+];
+
+// CSV escaping
+const esc = (val) => {
+  if (val === null || val === undefined) return "";
+  let s = String(val);
+  if (s.includes('"') || s.includes(",") || s.includes("\n") || s.includes("\r")) {
+    s = '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+};
+
+const fmtDate = (d) => (d ? new Date(d).toISOString() : "");
+
+export const exportSalesReportCSV = async (req, res, next) => {
+  try {
+    const {
+      paymentStatus,
+      deliveryStatus,
+      saleType,
+      source,
+      salesExecutive,
+      brand,
+      from,
+      to,
+      search,
+    } = req.query;
+
+    const filter = { deletedAt: null };
+
+    if (paymentStatus)   filter["pricing.paymentStatus"] = { $in: [].concat(paymentStatus) };
+    if (deliveryStatus)  filter.deliveryStatus           = { $in: [].concat(deliveryStatus) };
+    if (saleType)        filter.saleType                 = { $in: [].concat(saleType) };
+    if (source)          filter.source                   = { $in: [].concat(source) };
+    if (salesExecutive)  filter.salesExecutive           = salesExecutive;
+    if (brand)           filter["vehicleSnapshot.brand"] = { $regex: brand, $options: "i" };
+
+    if (from || to) {
+      filter.saleDate = {};
+      if (from) filter.saleDate.$gte = new Date(from);
+      if (to)   filter.saleDate.$lte = new Date(to);
+    }
+
+    if (search) {
+      filter.$or = [
+        { invoiceNumber:                  { $regex: search, $options: "i" } },
+        { "vehicleSnapshot.registrationNumber": { $regex: search, $options: "i" } },
+        { "buyerSnapshot.name":           { $regex: search, $options: "i" } },
+        { "buyerSnapshot.phone":          { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const sales = await Sale.find(filter)
+      .populate("salesExecutive", "name email")
+      .sort({ saleDate: -1 })
+      .lean();
+
+    const rows = sales.map((s) => ({
+      invoiceNumber:      s.invoiceNumber || "",
+      saleDate:           fmtDate(s.saleDate),
+      saleType:           s.saleType || "",
+      source:             s.source || "",
+
+      stockId:            s.vehicleSnapshot?.stockId || "",
+      vehicle:            `${s.vehicleSnapshot?.brand || ""} ${s.vehicleSnapshot?.model || ""}`.trim(),
+      registrationNumber: s.vehicleSnapshot?.registrationNumber || "",
+      year:               s.vehicleSnapshot?.year ?? "",
+      fuelType:           s.vehicleSnapshot?.fuelType || "",
+      transmission:       s.vehicleSnapshot?.transmission || "",
+      kilometersAtSale:   s.vehicleSnapshot?.kilometersAtSale ?? "",
+
+      buyerName:          s.buyerSnapshot?.name || "",
+      buyerPhone:         s.buyerSnapshot?.phone || "",
+      buyerEmail:         s.buyerSnapshot?.email || "",
+      buyerCity:          s.buyerSnapshot?.city || "",
+      buyerState:         s.buyerSnapshot?.state || "",
+
+      originalPrice:      s.pricing?.originalPrice ?? "",
+      discount:           s.pricing?.discount ?? 0,
+      finalSalePrice:     s.pricing?.finalSalePrice ?? "",
+      bookingAmount:      s.pricing?.bookingAmount ?? 0,
+      amountPaid:         s.pricing?.amountPaid ?? 0,
+      amountDue:          s.pricing?.amountDue ?? 0,
+      paymentStatus:      s.pricing?.paymentStatus || "",
+      paymentMethod:      s.pricing?.paymentMethod || "",
+
+      isFinanced:         s.finance?.isFinanced ? "Yes" : "No",
+      financierName:      s.finance?.financierName || "",
+      loanAmount:         s.finance?.loanAmount ?? "",
+
+      hasExchange:        s.exchange?.hasExchange ? "Yes" : "No",
+      exchangeValue:      s.exchange?.exchangeValue ?? 0,
+
+      deliveryStatus:     s.deliveryStatus || "",
+      deliveryDate:       fmtDate(s.deliveryDate),
+
+      salesExecutive:     s.salesExecutive?.name || "",
+      salesCommission:    s.salesCommission ?? 0,
+
+      notes:              s.notes || "",
+      createdAt:          fmtDate(s.createdAt),
+    }));
+
+    const header = CSV_COLUMNS.map((c) => esc(c.label)).join(",");
+    const body   = rows.map((r) => CSV_COLUMNS.map((c) => esc(r[c.key])).join(",")).join("\r\n");
+
+    const csv = "\uFEFF" + header + "\r\n" + body; // BOM for Excel UTF-8
+
+    const filename = `sales_export_${new Date().toISOString().slice(0, 10)}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).send(csv);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const exportSalesListCSV = async (req, res, next) => {
+  try {
+    const {
+      paymentStatus,
+      salesExecutive,
+      brand,
+      source,
+      deliveryStatus,
+      fromDate,
+      toDate,
+      search,
+      sort,
+    } = req.query;
+
+    /* ---------- SAME FILTER LOGIC AS listSales ---------- */
+    const filter = { deletedAt: null };
+
+    // Role-based filtering
+    if (req.user.role === "sales_executive") {
+      filter.salesExecutive = req.user._id;
+    } else if (salesExecutive) {
+      filter.salesExecutive = salesExecutive;
+    }
+
+    // Other filters
+    if (paymentStatus)  filter["pricing.paymentStatus"] = paymentStatus;
+    if (brand)          filter["vehicleSnapshot.brand"] = new RegExp(brand, "i");
+    if (source)         filter.source                   = source;
+    if (deliveryStatus) filter.deliveryStatus           = deliveryStatus;
+
+    // Date range
+    if (fromDate || toDate) {
+      filter.saleDate = {};
+      if (fromDate) filter.saleDate.$gte = new Date(fromDate);
+      if (toDate)   filter.saleDate.$lte = new Date(toDate);
+    }
+
+    // Search
+    if (search) {
+      filter.$or = [
+        { invoiceNumber:                 new RegExp(search, "i") },
+        { "buyerSnapshot.name":          new RegExp(search, "i") },
+        { "buyerSnapshot.phone":         new RegExp(search, "i") },
+        { "vehicleSnapshot.brand":       new RegExp(search, "i") },
+        { "vehicleSnapshot.model":       new RegExp(search, "i") },
+        { "vehicleSnapshot.stockId":     new RegExp(search, "i") },
+      ];
+    }
+
+    /* ---------- SAME SORT LOGIC AS listSales ---------- */
+    let sortOptions = { saleDate: -1 };
+    switch (sort) {
+      case "recent":         sortOptions = { saleDate: -1 };                    break;
+      case "name_asc":       sortOptions = { "buyerSnapshot.name": 1 };          break;
+      case "price_low_high": sortOptions = { "pricing.finalSalePrice": 1 };      break;
+      case "price_high_low": sortOptions = { "pricing.finalSalePrice": -1 };     break;
+      default:               sortOptions = { saleDate: -1 };
+    }
+
+    /* ---------- FETCH (NO PAGINATION) ---------- */
+    const sales = await Sale.find(filter)
+      .populate("salesExecutive", "name email role")
+      .sort(sortOptions)
+      .lean();
+
+    /* ---------- MAP ROWS ---------- */
+    const rows = sales.map((s) => ({
+      invoiceNumber:      s.invoiceNumber || "",
+      saleDate:           fmtDate(s.saleDate),
+      saleType:           s.saleType || "",
+      source:             s.source || "",
+
+      stockId:            s.vehicleSnapshot?.stockId || "",
+      vehicle:            `${s.vehicleSnapshot?.brand || ""} ${s.vehicleSnapshot?.model || ""}`.trim(),
+      registrationNumber: s.vehicleSnapshot?.registrationNumber || "",
+      year:               s.vehicleSnapshot?.year ?? "",
+      fuelType:           s.vehicleSnapshot?.fuelType || "",
+      transmission:       s.vehicleSnapshot?.transmission || "",
+      kilometersAtSale:   s.vehicleSnapshot?.kilometersAtSale ?? "",
+
+      buyerName:          s.buyerSnapshot?.name || "",
+      buyerPhone:         s.buyerSnapshot?.phone || "",
+      buyerEmail:         s.buyerSnapshot?.email || "",
+      buyerCity:          s.buyerSnapshot?.city || "",
+      buyerState:         s.buyerSnapshot?.state || "",
+
+      originalPrice:      s.pricing?.originalPrice ?? "",
+      discount:           s.pricing?.discount ?? 0,
+      finalSalePrice:     s.pricing?.finalSalePrice ?? "",
+      bookingAmount:      s.pricing?.bookingAmount ?? 0,
+      amountPaid:         s.pricing?.amountPaid ?? 0,
+      amountDue:          s.pricing?.amountDue ?? 0,
+      paymentStatus:      s.pricing?.paymentStatus || "",
+      paymentMethod:      s.pricing?.paymentMethod || "",
+
+      isFinanced:         s.finance?.isFinanced ? "Yes" : "No",
+      financierName:      s.finance?.financierName || "",
+      loanAmount:         s.finance?.loanAmount ?? "",
+
+      hasExchange:        s.exchange?.hasExchange ? "Yes" : "No",
+      exchangeValue:      s.exchange?.exchangeValue ?? 0,
+
+      deliveryStatus:     s.deliveryStatus || "",
+      deliveryDate:       fmtDate(s.deliveryDate),
+
+      salesExecutive:     s.salesExecutive?.name || "",
+      salesCommission:    s.salesCommission ?? 0,
+
+      notes:              s.notes || "",
+      createdAt:          fmtDate(s.createdAt),
+    }));
+
+    /* ---------- BUILD CSV ---------- */
+    const header = CSV_COLUMNS.map((c) => esc(c.label)).join(",");
+    const body   = rows.map((r) => CSV_COLUMNS.map((c) => esc(r[c.key])).join(",")).join("\r\n");
+    const csv    = "\uFEFF" + header + "\r\n" + body;
+
+    const filename = `sales_list_export_${new Date().toISOString().slice(0, 10)}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).send(csv);
+  } catch (err) {
+    next(err);
+  }
+};

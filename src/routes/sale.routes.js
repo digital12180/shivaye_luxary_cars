@@ -12,6 +12,8 @@ import {
     getSalesDashboard,
     getMonthlySalesTrend,
     getSalesReport,
+    exportSalesReportCSV,
+    exportSalesListCSV
 } from "../controllers/sale.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 
@@ -92,6 +94,7 @@ router.delete(
     deleteSale
 );
 
-
+router.get("/sales-report/export/csv", verifyJWT, restrictTo("admin"), exportSalesReportCSV);
+router.get("/export/csv", verifyJWT, restrictTo("admin"), exportSalesListCSV);
 
 export default router;
