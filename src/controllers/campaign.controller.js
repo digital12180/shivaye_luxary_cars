@@ -64,204 +64,61 @@ export const getPublicCampaign = async (req, res, next) => {
 
 /* ================= CRM ================= */
 
-// export const listCampaigns = async (req, res, next) => {
-//     try {
-//         const page = Number(req.query.page) || 1;
-//         const limit = Number(req.query.limit) || 20;
-//         const { status, search } = req.query;
-
-//         const filter = {};
-
-//         // 🔥 Soft delete filter
-//         filter.deletedAt = null;
-
-//         // Status Filter
-//         if (status && status !== "All statuses") {
-//             filter.status = status;
-//         }
-
-//         // Search Filter
-//         if (search) {
-//             filter.$or = [
-//                 { name: new RegExp(search, "i") },
-//                 { title: new RegExp(search, "i") },
-//             ];
-//         }
-
-//         // ✅ Counts filter — status hata do
-//         const countsFilter = { ...filter };
-//         delete countsFilter.status;
-
-//         const STATUSES = ["Draft", "Active", "Paused", "Ended"];
-
-//         const [data, total, statusAgg] = await Promise.all([
-//             Campaign.find(filter)
-//                 .populate("createdBy", "name")
-//                 .populate("updatedBy", "name")
-//                 .sort({ startDate: 1 })
-//                 .skip((page - 1) * limit)
-//                 .limit(limit),
-
-//             Campaign.countDocuments(filter),
-
-//             Campaign.aggregate([
-//                 { $match: countsFilter },
-//                 { $group: { _id: "$status", count: { $sum: 1 } } },
-//             ]),
-//         ]);
-
-//         // ✅ Zero-fill counts
-//         const counts = STATUSES.reduce((acc, s) => {
-//             acc[s] = 0;
-//             return acc;
-//         }, {});
-
-//         statusAgg.forEach(({ _id, count }) => {
-//             if (_id) counts[_id] = count;
-//         });
-
-//         return ok(res, {
-//             data,
-//             pagination: {
-//                 total,
-//                 page,
-//                 limit,
-//                 pages: Math.ceil(total / limit),
-//             },
-//             counts,
-//         });
-//     } catch (err) {
-//         next(err);
-//     }
-// };
-
-
 export const listCampaigns = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
         const { status, search } = req.query;
-        const now = new Date();
 
-        const matchFilter = { deletedAt: null };
+        const filter = {};
+
+        // 🔥 Soft delete filter
+        filter.deletedAt = null;
+
+        // Status Filter
+        if (status && status !== "All statuses") {
+            filter.status = status;
+        }
 
         // Search Filter
         if (search) {
-            matchFilter.$or = [
+            filter.$or = [
                 { name: new RegExp(search, "i") },
                 { title: new RegExp(search, "i") },
             ];
         }
 
-        // 🔥 CRITICAL FIX: Real-time status calculation using Aggregation
-        // Hum pehle dynamic status calculate karenge, phir uspar filter lagayenge
-        
-        const pipeline = [
-            { $match: matchFilter },
-            {
-                $addFields: {
-                    // Agar status 'Active' hai aur endDate past mein hai, toh use 'Ended' maano
-                    realStatus: {
-                        $cond: {
-                            if: {
-                                $and: [
-                                    { $eq: ["$status", "Active"] },
-                                    { $lt: ["$endDate", now] }
-                                ]
-                            },
-                            then: "Ended",
-                            else: "$status"
-                        }
-                    }
-                }
-            }
-        ];
+        // ✅ Counts filter — status hata do
+        const countsFilter = { ...filter };
+        delete countsFilter.status;
 
-        // Ab realStatus par Filter lagayein (jo UI dropdown se aata hai)
-        if (status && status !== "All statuses") {
-            pipeline.push({ $match: { realStatus: status } });
-        }
+        const STATUSES = ["Draft", "Active", "Paused", "Ended"];
 
-        // Sort karein (startDate ascending)
-        pipeline.push({ $sort: { startDate: 1 } });
-        
-        // Pagination
-        pipeline.push({ $skip: (page - 1) * limit });
-        pipeline.push({ $limit: limit });
+        const [data, total, statusAgg] = await Promise.all([
+            Campaign.find(filter)
+                .populate("createdBy", "name")
+                .populate("updatedBy", "name")
+                .sort({ startDate: 1 })
+                .skip((page - 1) * limit)
+                .limit(limit),
 
-        // Populate createdBy & updatedBy
-        pipeline.push(
-            {
-                $lookup: {
-                    from: "users",
-                    localField: "createdBy",
-                    foreignField: "_id",
-                    as: "createdBy",
-                    pipeline: [{ $project: { name: 1 } }]
-                }
-            },
-            { $unwind: { path: "$createdBy", preserveNullAndEmptyArrays: true } },
-            {
-                $lookup: {
-                    from: "users",
-                    localField: "updatedBy",
-                    foreignField: "_id",
-                    as: "updatedBy",
-                    pipeline: [{ $project: { name: 1 } }]
-                }
-            },
-            { $unwind: { path: "$updatedBy", preserveNullAndEmptyArrays: true } },
-            
-            // realStatus ko status field mein replace karein taaki frontend ko wahi dikhe
-            { $addFields: { status: "$realStatus" } },
-            { $project: { realStatus: 0 } }
-        );
+            Campaign.countDocuments(filter),
 
-        // ✅ Counts calculate karne ke liye separate pipeline (bina pagination ke)
-        // Taaki upar wale tabs par sahi count aaye
-        const countsPipeline = [
-            { $match: matchFilter }, // Sirf search filter (agar hai)
-            {
-                $addFields: {
-                    realStatus: {
-                        $cond: {
-                            if: {
-                                $and: [
-                                    { $eq: ["$status", "Active"] },
-                                    { $lt: ["$endDate", now] }
-                                ]
-                            },
-                            then: "Ended",
-                            else: "$status"
-                        }
-                    }
-                }
-            },
-            { $group: { _id: "$realStatus", count: { $sum: 1 } } }
-        ];
-
-        const [data, countsAgg] = await Promise.all([
-            Campaign.aggregate(pipeline),
-            Campaign.aggregate(countsPipeline)
+            Campaign.aggregate([
+                { $match: countsFilter },
+                { $group: { _id: "$status", count: { $sum: 1 } } },
+            ]),
         ]);
 
-        // Format Counts for UI Tabs
-        const STATUSES = ["Active", "Draft", "Paused", "Ended"];
+        // ✅ Zero-fill counts
         const counts = STATUSES.reduce((acc, s) => {
             acc[s] = 0;
             return acc;
         }, {});
 
-        let total = 0;
-        countsAgg.forEach(({ _id, count }) => {
+        statusAgg.forEach(({ _id, count }) => {
             if (_id) counts[_id] = count;
-            total += count; // Total for pagination
         });
-
-        // Agar specific status filter laga hua hai, toh pagination total usi ke hisaab se hona chahiye
-        if (status && status !== "All statuses") {
-            total = counts[status] || 0;
-        }
 
         return ok(res, {
             data,
@@ -271,13 +128,12 @@ export const listCampaigns = async (req, res, next) => {
                 limit,
                 pages: Math.ceil(total / limit),
             },
-            counts, // Yeh object UI ke tabs (Active 1, Draft 0, etc.) ke liye hai
+            counts,
         });
     } catch (err) {
         next(err);
     }
 };
-
 
 export const getCampaign = async (req, res, next) => {
     try {
