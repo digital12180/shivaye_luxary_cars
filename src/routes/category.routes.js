@@ -7,6 +7,7 @@ import {
     updateCategory,
     toggleCategoryActive,
     deleteCategory,
+    exportCategoriesCSV,
 } from "../controllers/category.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 import { upload } from "../middleware/upload.middleware.js";
@@ -57,5 +58,8 @@ router.delete(
     restrictTo("admin", "sales_manager"),
     deleteCategory
 );
+
+router.get("/export/csv", verifyJWT,
+    restrictTo("admin", "sales_manager"), exportCategoriesCSV);
 
 export default router;

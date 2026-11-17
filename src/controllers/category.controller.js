@@ -247,3 +247,79 @@ export const deleteCategory = async (req, res, next) => {
         next(err);
     }
 };
+
+// Only important, business-relevant fields
+const CSV_COLUMNS = [
+  { key: "name",             label: "Name" },
+  { key: "slug",             label: "Slug" },
+  { key: "description",      label: "Description" },
+  { key: "isActive",         label: "Active" },
+  { key: "isFeatured",       label: "Featured" },
+  { key: "metaTitle",        label: "Meta Title" },
+  { key: "metaDescription",  label: "Meta Description" },
+  { key: "keywords",         label: "Keywords" },
+  { key: "createdAt",        label: "Created At" },
+];
+
+// CSV escaping
+const esc = (val) => {
+  if (val === null || val === undefined) return "";
+  let s = String(val);
+  if (s.includes('"') || s.includes(",") || s.includes("\n") || s.includes("\r")) {
+    s = '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+};
+
+const fmtDate = (d) => (d ? new Date(d).toISOString() : "");
+
+export const exportCategoriesCSV = async (req, res, next) => {
+  try {
+    const { search, featured, isActive, sortBy = "displayOrder" } = req.query;
+
+    const filter = { deletedAt: null };
+
+    if (featured === "true") filter.isFeatured = true;
+
+    if (isActive !== undefined && isActive !== "") {
+      filter.isActive = isActive === "true" || isActive === true;
+    }
+
+    if (search) {
+      filter.$or = [
+        { name:        { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const categories = await Category.find(filter)
+      .sort(sortBy)
+      .lean();
+
+    const rows = categories.map((c) => ({
+      name:            c.name,
+      slug:            c.slug || "",
+      description:     c.description || "",
+      isActive:        c.isActive   ? "Yes" : "No",
+      isFeatured:      c.isFeatured ? "Yes" : "No",
+      metaTitle:       c.seo?.metaTitle || "",
+      metaDescription: c.seo?.metaDescription || "",
+      keywords:        Array.isArray(c.seo?.keywords) ? c.seo.keywords.join(" | ") : "",
+      createdAt:       fmtDate(c.createdAt),
+    }));
+
+    const header = CSV_COLUMNS.map((c) => esc(c.label)).join(",");
+    const body   = rows.map((r) => CSV_COLUMNS.map((c) => esc(r[c.key])).join(",")).join("\r\n");
+
+    const csv = "\uFEFF" + header + "\r\n" + body; // BOM for Excel UTF-8
+
+    const filename = `categories_export_${new Date().toISOString().slice(0, 10)}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).send(csv);
+  } catch (err) {
+    next(err);
+  }
+};
