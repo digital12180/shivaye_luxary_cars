@@ -12,7 +12,8 @@ import {
     toggleCustomerStatus,
     deleteCustomer,
     getCustomerStats,
-    getMyReservedCars
+    getMyReservedCars,
+    exportCustomersCSV
 } from "../controllers/customer.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 import { verifyCustomerJWT } from "../middleware/customerAuth.middleware.js";
@@ -84,5 +85,7 @@ router.delete(
     restrictTo("admin"),
     deleteCustomer
 );
+
+router.get("/export/csv", verifyJWT, restrictTo("admin", "sales_manager"), exportCustomersCSV);
 
 export default router;

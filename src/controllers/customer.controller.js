@@ -513,3 +513,118 @@ export async function getMyReservedCars(req, res) {
         return res.status(500).json({ success: false, message: "Server error" });
     }
 }
+
+// Only important, business-relevant fields
+const CSV_COLUMNS = [
+  { key: "customerNumber",  label: "Customer Number" },
+  { key: "name",            label: "Name" },
+  { key: "phone",           label: "Phone" },
+  { key: "alternatePhone",  label: "Alternate Phone" },
+  { key: "email",           label: "Email" },
+  { key: "isVerified",      label: "Verified" },
+
+  // Location
+  { key: "city",            label: "City" },
+  { key: "state",           label: "State" },
+  { key: "country",         label: "Country" },
+  { key: "address",         label: "Address" },
+  { key: "pincode",         label: "Pincode" },
+
+  // Business
+  { key: "source",          label: "Source" },
+  { key: "interestedIn",    label: "Interested In" },
+  { key: "savedCars",       label: "Saved Cars Count" },
+  { key: "notes",           label: "Notes" },
+
+  // Status / dates
+  { key: "lastContactedAt", label: "Last Contacted At" },
+  { key: "isActive",        label: "Is Active" },
+  { key: "createdAt",       label: "Created At" },
+];
+
+// CSV escaping
+const esc = (val) => {
+  if (val === null || val === undefined) return "";
+  let s = String(val);
+  if (s.includes('"') || s.includes(",") || s.includes("\n") || s.includes("\r")) {
+    s = '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+};
+
+const fmtDate = (d) => (d ? new Date(d).toISOString() : "");
+
+export const exportCustomersCSV = async (req, res) => {
+  try {
+    const { source, interestedIn, isVerified, city, from, to, search } = req.query;
+
+    const filter = { deletedAt: null };
+
+    if (source)        filter.source       = { $in: [].concat(source) };
+    if (interestedIn)  filter.interestedIn = { $in: [].concat(interestedIn) };
+    if (city)          filter.city         = { $regex: city, $options: "i" };
+
+    if (isVerified !== undefined && isVerified !== "") {
+      filter.isVerified = isVerified === "true" || isVerified === true;
+    }
+
+    if (from || to) {
+      filter.createdAt = {};
+      if (from) filter.createdAt.$gte = new Date(from);
+      if (to)   filter.createdAt.$lte = new Date(to);
+    }
+
+    if (search) {
+      filter.$or = [
+        { customerNumber: { $regex: search, $options: "i" } },
+        { name:           { $regex: search, $options: "i" } },
+        { phone:          { $regex: search, $options: "i" } },
+        { email:          { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const customers = await Customer.find(filter)
+      .select("-password -otp -otpExpires -otpAttempts -otpLastSentAt -refreshTokenHash")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const rows = customers.map((c) => ({
+      customerNumber:  c.customerNumber,
+      name:            c.name,
+      phone:           c.phone,
+      alternatePhone:  c.alternatePhone || "",
+      email:           c.email || "",
+      isVerified:      c.isVerified ? "Yes" : "No",
+
+      city:            c.city || "",
+      state:           c.state || "",
+      country:         c.country || "",
+      address:         c.address || "",
+      pincode:         c.pincode || "",
+
+      source:          c.source,
+      interestedIn:    c.interestedIn,
+      savedCars:       Array.isArray(c.savedCars) ? c.savedCars.length : 0,
+      notes:           c.notes || "",
+
+      lastContactedAt: fmtDate(c.lastContactedAt),
+      isActive:        c.isActive ? "Yes" : "No",
+      createdAt:       fmtDate(c.createdAt),
+    }));
+
+    const header = CSV_COLUMNS.map((c) => esc(c.label)).join(",");
+    const body   = rows.map((r) => CSV_COLUMNS.map((c) => esc(r[c.key])).join(",")).join("\r\n");
+
+    const csv = "\uFEFF" + header + "\r\n" + body; // BOM for Excel UTF-8
+
+    const filename = `customers_export_${new Date().toISOString().slice(0, 10)}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).send(csv);
+  } catch (err) {
+    console.error("exportCustomersCSV error:", err);
+    return res.status(500).json({ success: false, message: "Failed to export customers" });
+  }
+};
