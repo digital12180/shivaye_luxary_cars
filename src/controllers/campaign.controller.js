@@ -64,90 +64,18 @@ export const getPublicCampaign = async (req, res, next) => {
 
 /* ================= CRM ================= */
 
-// export const listCampaigns = async (req, res, next) => {
-//     try {
-//         const page = Number(req.query.page) || 1;
-//         const limit = Number(req.query.limit) || 20;
-//         const { status, search } = req.query;
-
-//         const filter = {};
-
-//         // 🔥 Soft delete filter
-//         filter.deletedAt = null;
-
-//         // Status Filter
-//         if (status && status !== "All statuses") {
-//             filter.status = status;
-//         }
-
-//         // Search Filter
-//         if (search) {
-//             filter.$or = [
-//                 { name: new RegExp(search, "i") },
-//                 { title: new RegExp(search, "i") },
-//             ];
-//         }
-
-//         // ✅ Counts filter — status hata do
-//         const countsFilter = { ...filter };
-//         delete countsFilter.status;
-
-//         const STATUSES = ["Draft", "Active", "Paused", "Ended"];
-
-//         const [data, total, statusAgg] = await Promise.all([
-//             Campaign.find(filter)
-//                 .populate("createdBy", "name")
-//                 .populate("updatedBy", "name")
-//                 .sort({ startDate: 1 })
-//                 .skip((page - 1) * limit)
-//                 .limit(limit),
-
-//             Campaign.countDocuments(filter),
-
-//             Campaign.aggregate([
-//                 { $match: countsFilter },
-//                 { $group: { _id: "$status", count: { $sum: 1 } } },
-//             ]),
-//         ]);
-
-//         // ✅ Zero-fill counts
-//         const counts = STATUSES.reduce((acc, s) => {
-//             acc[s] = 0;
-//             return acc;
-//         }, {});
-
-//         statusAgg.forEach(({ _id, count }) => {
-//             if (_id) counts[_id] = count;
-//         });
-
-//         return ok(res, {
-//             data,
-//             pagination: {
-//                 total,
-//                 page,
-//                 limit,
-//                 pages: Math.ceil(total / limit),
-//             },
-//             counts,
-//         });
-//     } catch (err) {
-//         next(err);
-//     }
-// };
-
-
 export const listCampaigns = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
         const { status, search } = req.query;
-        const now = new Date();
 
-        const filter = {
-            deletedAt: null // Soft delete filter
-        };
+        const filter = {};
 
-        // Status Filter (DB level par filter lagayenge)
+        // 🔥 Soft delete filter
+        filter.deletedAt = null;
+
+        // Status Filter
         if (status && status !== "All statuses") {
             filter.status = status;
         }
@@ -160,46 +88,29 @@ export const listCampaigns = async (req, res, next) => {
             ];
         }
 
-        // 1. Data Fetch Karein
+        // ✅ Counts filter — status hata do
+        const countsFilter = { ...filter };
+        delete countsFilter.status;
+
+        const STATUSES = ["Draft", "Active", "Paused", "Ended"];
+
         const [data, total, statusAgg] = await Promise.all([
             Campaign.find(filter)
                 .populate("createdBy", "name")
                 .populate("updatedBy", "name")
                 .sort({ startDate: 1 })
                 .skip((page - 1) * limit)
-                .limit(limit)
-                .lean(), // Lean use karein taaki object modify karna easy ho
+                .limit(limit),
 
             Campaign.countDocuments(filter),
 
-            // Tabs ke counts ke liye aggregation
             Campaign.aggregate([
-                { $match: { deletedAt: null } },
+                { $match: countsFilter },
                 { $group: { _id: "$status", count: { $sum: 1 } } },
             ]),
         ]);
 
-        // 2. 🔥 MAIN FIX: Real-time status check karein
-        const formattedData = data.map((campaign) => {
-            let currentStatus = campaign.status;
-
-            // Agar status Active hai AUR endDate nikal chuki hai, toh "Ended" kar dein
-            if (
-                currentStatus === "Active" &&
-                campaign.endDate &&
-                new Date(campaign.endDate) < now
-            ) {
-                currentStatus = "Ended";
-            }
-
-            return {
-                ...campaign,
-                status: currentStatus, // Frontend ko updated status milega
-            };
-        });
-
-        // 3. Counts Update Karein (Tabs ke liye)
-        const STATUSES = ["Draft", "Active", "Paused", "Ended"];
+        // ✅ Zero-fill counts
         const counts = STATUSES.reduce((acc, s) => {
             acc[s] = 0;
             return acc;
@@ -209,20 +120,8 @@ export const listCampaigns = async (req, res, next) => {
             if (_id) counts[_id] = count;
         });
 
-        // Agar DB mein active hain lekin end date nikal gayi hai, toh counts adjust karein
-        const expiredActiveCount = await Campaign.countDocuments({
-            status: "Active",
-            endDate: { $lt: now },
-            deletedAt: null
-        });
-
-        if (expiredActiveCount > 0) {
-            counts["Active"] = Math.max(0, counts["Active"] - expiredActiveCount);
-            counts["Ended"] = (counts["Ended"] || 0) + expiredActiveCount;
-        }
-
         return ok(res, {
-            data: formattedData,
+            data,
             pagination: {
                 total,
                 page,
@@ -235,7 +134,6 @@ export const listCampaigns = async (req, res, next) => {
         next(err);
     }
 };
-
 
 export const getCampaign = async (req, res, next) => {
     try {
