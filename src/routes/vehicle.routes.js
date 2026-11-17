@@ -16,7 +16,8 @@ import {
     getVehicleCTA,
     updateRcCheckStatus,
     listFeaturedVehicles,
-    toggleVehicleFeatured
+    toggleVehicleFeatured,
+    exportVehiclesCSV
 } from "../controllers/vehicle.controller.js";
 import { verifyJWT, restrictTo } from "../middleware/auth.middleware.js";
 import { upload } from "../middleware/upload.middleware.js";
@@ -94,5 +95,8 @@ router.patch(
     restrictTo("admin"),
     toggleVehicleFeatured
 );
+
+router.get("/export/csv", verifyJWT, restrictTo("admin", "sales_manager"), exportVehiclesCSV);
+
 
 export default router;

@@ -843,3 +843,147 @@ export const updateRcCheckStatus = async (req, res, next) => {
         next(err);
     }
 };
+
+// Only important, business-relevant fields
+const CSV_COLUMNS = [
+  { key: "stockId",            label: "Stock ID" },
+  { key: "status",             label: "Status" },
+  { key: "brand",              label: "Brand" },
+  { key: "model",              label: "Model" },
+  { key: "variant",            label: "Variant" },
+  { key: "year",               label: "Year" },
+  { key: "registrationYear",   label: "Registration Year" },
+
+  // Specs
+  { key: "fuelType",           label: "Fuel Type" },
+  { key: "transmission",       label: "Transmission" },
+  { key: "bodyType",           label: "Body Type" },
+  { key: "category",           label: "Category" },
+  { key: "exteriorColour",     label: "Colour" },
+  { key: "ownership",          label: "Ownership" },
+  { key: "kilometers",         label: "Kilometers" },
+
+  // Registration
+  { key: "registrationNumber", label: "Registration Number" },
+  { key: "rcCheck",            label: "RC Check" },
+
+  // Pricing
+  { key: "askingPrice",        label: "Asking Price" },
+  { key: "soldPrice",          label: "Sold Price" },
+
+  // Location & flags
+  { key: "location",           label: "Location" },
+  { key: "featured",           label: "Featured" },
+  { key: "isPublished",        label: "Published" },
+
+  // Dates
+  { key: "listedAt",           label: "Listed At" },
+  { key: "soldAt",             label: "Sold At" },
+  { key: "createdAt",          label: "Created At" },
+];
+
+// CSV escaping
+const esc = (val) => {
+  if (val === null || val === undefined) return "";
+  let s = String(val);
+  if (s.includes('"') || s.includes(",") || s.includes("\n") || s.includes("\r")) {
+    s = '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+};
+
+const fmtDate = (d) => (d ? new Date(d).toISOString() : "");
+
+export const exportVehiclesCSV = async (req, res) => {
+  try {
+    const {
+      brand,
+      status,
+      fuelType,
+      transmission,
+      location,
+      isPublished,
+      from,
+      to,
+      search,
+    } = req.query;
+
+    const filter = { deletedAt: null };
+
+    if (brand)        filter.brand        = { $regex: brand, $options: "i" };
+    if (status)       filter.status       = { $in: [].concat(status) };
+    if (fuelType)     filter.fuelType     = { $in: [].concat(fuelType) };
+    if (transmission) filter.transmission = { $in: [].concat(transmission) };
+    if (location)     filter.location     = { $regex: location, $options: "i" };
+
+    if (isPublished !== undefined && isPublished !== "") {
+      filter.isPublished = isPublished === "true" || isPublished === true;
+    }
+
+    if (from || to) {
+      filter.createdAt = {};
+      if (from) filter.createdAt.$gte = new Date(from);
+      if (to)   filter.createdAt.$lte = new Date(to);
+    }
+
+    if (search) {
+      filter.$or = [
+        { stockId:            { $regex: search, $options: "i" } },
+        { registrationNumber: { $regex: search, $options: "i" } },
+        { brand:              { $regex: search, $options: "i" } },
+        { model:              { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const vehicles = await Vehicle.find(filter)
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const rows = vehicles.map((v) => ({
+      stockId:            v.stockId || "",
+      status:             v.status,
+      brand:              v.brand,
+      model:              v.model,
+      variant:            v.variant || "",
+      year:               v.year,
+      registrationYear:   v.registrationYear ?? "",
+
+      fuelType:           v.fuelType,
+      transmission:       v.transmission,
+      bodyType:           v.bodyType || "",
+      category:           v.category || "",
+      exteriorColour:     v.exteriorColour || "",
+      ownership:          v.ownership || "",
+      kilometers:         v.kilometers ?? "",
+
+      registrationNumber: v.registrationNumber,
+      rcCheck:            v.rcCheck || "",
+
+      askingPrice:        v.askingPrice ?? "",
+      soldPrice:          v.soldPrice ?? "",
+
+      location:           v.location || "",
+      featured:           v.featured ? "Yes" : "No",
+      isPublished:        v.isPublished ? "Yes" : "No",
+
+      listedAt:           fmtDate(v.listedAt),
+      soldAt:             fmtDate(v.soldAt),
+      createdAt:          fmtDate(v.createdAt),
+    }));
+
+    const header = CSV_COLUMNS.map((c) => esc(c.label)).join(",");
+    const body   = rows.map((r) => CSV_COLUMNS.map((c) => esc(r[c.key])).join(",")).join("\r\n");
+
+    const csv = "\uFEFF" + header + "\r\n" + body; // BOM for Excel UTF-8
+
+    const filename = `vehicles_export_${new Date().toISOString().slice(0, 10)}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).send(csv);
+  } catch (err) {
+    console.error("exportVehiclesCSV error:", err);
+    return res.status(500).json({ success: false, message: "Failed to export vehicles" });
+  }
+};
