@@ -3,41 +3,76 @@ import Lead from "../models/Lead.js";
 import { ok, fail } from "../utils/response.js";
 import { uploadToCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js";
 
+// export const getActiveCampaigns = async (req, res, next) => {
+//     try {
+//         const now = new Date();
+
+//         // 1️⃣ Saare valid campaigns fetch karo (current + upcoming)
+//         const campaigns = await Campaign.find({
+//             isActive: true,
+//             deletedAt: null,
+//             $or: [
+//                 // Currently running
+//                 {
+//                     startDate: { $lte: now },
+//                     $or: [
+//                         { endDate: { $gte: now } },
+//                         { endDate: null },
+//                         { endDate: { $exists: false } },
+//                     ],
+//                 },
+//                 // Upcoming (aane wala)
+//                 { startDate: { $gt: now } },
+//             ],
+//         })
+//             .sort("-startDate")   // latest pehle
+//             .select("-metrics -spend -budget -createdBy -updatedBy");
+
+//         // 2️⃣ Rotation — har 10 min mein index badhe
+//         let selected = null;
+//         if (campaigns.length > 0) {
+//             const SLOT_MS = 10 * 60 * 1000;             // 10 minutes
+//             const slot = Math.floor(Date.now() / SLOT_MS);
+//             const index = slot % campaigns.length;      // rotate 0 → 1 → 2 → 0...
+//             selected = campaigns[index];
+//         }
+
+//         // 3️⃣ ALWAYS array return karo (single ho tab bhi)
+//         return ok(res, selected ? [selected] : []);
+//     } catch (err) {
+//         next(err);
+//     }
+// };
+
+
 export const getActiveCampaigns = async (req, res, next) => {
     try {
         const now = new Date();
 
-        // 1️⃣ Saare valid campaigns fetch karo (current + upcoming)
+        // 🔥 FIX: Sirf currently running campaigns fetch karein
         const campaigns = await Campaign.find({
             isActive: true,
+            status: "Active", // Ensure status bhi active ho
             deletedAt: null,
+            startDate: { $lte: now }, // Start date aaj se pehle ki ho
             $or: [
-                // Currently running
-                {
-                    startDate: { $lte: now },
-                    $or: [
-                        { endDate: { $gte: now } },
-                        { endDate: null },
-                        { endDate: { $exists: false } },
-                    ],
-                },
-                // Upcoming (aane wala)
-                { startDate: { $gt: now } },
+                { endDate: { $gte: now } }, // End date aaj ke baad ki ho
+                { endDate: null },
+                { endDate: { $exists: false } },
             ],
         })
-            .sort("-startDate")   // latest pehle
+            .sort("-startDate")
             .select("-metrics -spend -budget -createdBy -updatedBy");
 
-        // 2️⃣ Rotation — har 10 min mein index badhe
+        // Rotation logic (same as before)
         let selected = null;
         if (campaigns.length > 0) {
-            const SLOT_MS = 10 * 60 * 1000;             // 10 minutes
+            const SLOT_MS = 10 * 60 * 1000;
             const slot = Math.floor(Date.now() / SLOT_MS);
-            const index = slot % campaigns.length;      // rotate 0 → 1 → 2 → 0...
+            const index = slot % campaigns.length;
             selected = campaigns[index];
         }
 
-        // 3️⃣ ALWAYS array return karo (single ho tab bhi)
         return ok(res, selected ? [selected] : []);
     } catch (err) {
         next(err);
@@ -64,23 +99,94 @@ export const getPublicCampaign = async (req, res, next) => {
 
 /* ================= CRM ================= */
 
+// export const listCampaigns = async (req, res, next) => {
+//     try {
+//         const page = Number(req.query.page) || 1;
+//         const limit = Number(req.query.limit) || 20;
+//         const { status, search } = req.query;
+
+//         const filter = {};
+
+//         // 🔥 Soft delete filter
+//         filter.deletedAt = null;
+
+//         // Status Filter
+//         if (status && status !== "All statuses") {
+//             filter.status = status;
+//         }
+
+//         // Search Filter
+//         if (search) {
+//             filter.$or = [
+//                 { name: new RegExp(search, "i") },
+//                 { title: new RegExp(search, "i") },
+//             ];
+//         }
+
+//         // ✅ Counts filter — status hata do
+//         const countsFilter = { ...filter };
+//         delete countsFilter.status;
+
+//         const STATUSES = ["Draft", "Active", "Paused", "Ended"];
+
+//         const [data, total, statusAgg] = await Promise.all([
+//             Campaign.find(filter)
+//                 .populate("createdBy", "name")
+//                 .populate("updatedBy", "name")
+//                 .sort({ startDate: 1 })
+//                 .skip((page - 1) * limit)
+//                 .limit(limit),
+
+//             Campaign.countDocuments(filter),
+
+//             Campaign.aggregate([
+//                 { $match: countsFilter },
+//                 { $group: { _id: "$status", count: { $sum: 1 } } },
+//             ]),
+//         ]);
+
+//         // ✅ Zero-fill counts
+//         const counts = STATUSES.reduce((acc, s) => {
+//             acc[s] = 0;
+//             return acc;
+//         }, {});
+
+//         statusAgg.forEach(({ _id, count }) => {
+//             if (_id) counts[_id] = count;
+//         });
+
+//         return ok(res, {
+//             data,
+//             pagination: {
+//                 total,
+//                 page,
+//                 limit,
+//                 pages: Math.ceil(total / limit),
+//             },
+//             counts,
+//         });
+//     } catch (err) {
+//         next(err);
+//     }
+// };
+
+
 export const listCampaigns = async (req, res, next) => {
     try {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
         const { status, search } = req.query;
+        const now = new Date();
 
-        const filter = {};
+        const filter = { deletedAt: null };
 
-        // 🔥 Soft delete filter
-        filter.deletedAt = null;
-
-        // Status Filter
+        // UI Filter lagayein (DB se fetch karte time)
+        // Note: Agar user "Active" tab par hai, toh hum DB se Active mangwayenge,
+        // baad mein expired ko hata denge.
         if (status && status !== "All statuses") {
             filter.status = status;
         }
 
-        // Search Filter
         if (search) {
             filter.$or = [
                 { name: new RegExp(search, "i") },
@@ -94,15 +200,13 @@ export const listCampaigns = async (req, res, next) => {
 
         const STATUSES = ["Draft", "Active", "Paused", "Ended"];
 
-        const [data, total, statusAgg] = await Promise.all([
+        const [data, statusAgg] = await Promise.all([
             Campaign.find(filter)
                 .populate("createdBy", "name")
                 .populate("updatedBy", "name")
                 .sort({ startDate: 1 })
-                .skip((page - 1) * limit)
-                .limit(limit),
-
-            Campaign.countDocuments(filter),
+                // Pagination hum baad mein manually lagayenge kyunki expired items filter out honge
+                .lean(),
 
             Campaign.aggregate([
                 { $match: countsFilter },
@@ -110,7 +214,7 @@ export const listCampaigns = async (req, res, next) => {
             ]),
         ]);
 
-        // ✅ Zero-fill counts
+        // ✅ Counts calculate karein (Expired ko Ended mein shift karein)
         const counts = STATUSES.reduce((acc, s) => {
             acc[s] = 0;
             return acc;
@@ -120,8 +224,41 @@ export const listCampaigns = async (req, res, next) => {
             if (_id) counts[_id] = count;
         });
 
+        // Expired active campaigns ka count adjust karein
+        const expiredActiveCount = await Campaign.countDocuments({
+            status: "Active",
+            endDate: { $lt: now },
+            deletedAt: null
+        });
+
+        if (expiredActiveCount > 0) {
+            counts["Active"] = Math.max(0, counts["Active"] - expiredActiveCount);
+            counts["Ended"] = (counts["Ended"] || 0) + expiredActiveCount;
+        }
+
+        // 🔥 FIX: Data ko filter aur format karein (Real-time status update)
+        let formattedData = data.map((campaign) => {
+            let currentStatus = campaign.status;
+
+            // Agar Active hai par endDate nikal gayi, toh Ended mark karein
+            if (currentStatus === "Active" && campaign.endDate && new Date(campaign.endDate) < now) {
+                currentStatus = "Ended";
+            }
+
+            return { ...campaign, status: currentStatus };
+        });
+
+        // Agar user ne specific status tab select kiya hai, toh uske hisaab se filter karein
+        if (status && status !== "All statuses") {
+            formattedData = formattedData.filter(c => c.status === status);
+        }
+
+        // Ab manual Pagination apply karein
+        const total = formattedData.length;
+        const paginatedData = formattedData.slice((page - 1) * limit, page * limit);
+
         return ok(res, {
-            data,
+            data: paginatedData,
             pagination: {
                 total,
                 page,
