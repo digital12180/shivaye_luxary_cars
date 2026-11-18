@@ -558,7 +558,7 @@ export const updateStatus = async (req, res, next) => {
                 // toh unko yahan pass kar sakte hain. Abhi ke liye hum dummy/default bhej rahe hain.
                 const salePayload = {
                     vehicle: vehicle._id,
-                    // customer: req.body.customerId, // Agar frontend se customerId aa raha hai toh isko uncomment karein
+                    customer: req.body.customerId, // Agar frontend se customerId aa raha hai toh isko uncomment karein
                     salesExecutive: req.user._id,
                     vehicleSnapshot: {
                         stockId: vehicle.stockId,
