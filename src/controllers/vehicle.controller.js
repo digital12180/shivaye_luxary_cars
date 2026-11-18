@@ -5,6 +5,7 @@ import Category from "../models/Category.js";
 import { ok, fail } from "../utils/response.js";
 import { uploadMultipleToCloudinary, uploadToCloudinary, deleteMultipleFromCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js";
 import { verifyVehicleRC } from "../services/rcVerificationService.js"
+import Sale from "../models/Sale.js";
 
 const generateStockId = () => {
     const now = new Date();
@@ -530,6 +531,7 @@ export const updateVehicle = async (req, res, next) => {
 /* ============================================================
    ADMIN — PATCH /api/v1/vehicles/:id/status
    ============================================================ */
+
 export const updateStatus = async (req, res, next) => {
     try {
         const { status } = req.body;
@@ -541,8 +543,52 @@ export const updateStatus = async (req, res, next) => {
         if (status === "Reserved") update.reservedAt = new Date();
         if (status === "Sold") update.soldAt = new Date();
 
+        // 1. Vehicle ka status update karein
         const vehicle = await Vehicle.findByIdAndUpdate(req.params.id, update, { new: true });
         if (!vehicle) return fail(res, "Vehicle not found", 404);
+
+        // 2. Agar status "Sold" hai, toh Sale model mein entry banayein
+        if (status === "Sold") {
+            // Check karein ki kya pehle se is vehicle ki sale ho chuki hai?
+            const existingSale = await Sale.findOne({ vehicle: vehicle._id });
+            
+            if (!existingSale) {
+                // Sale entry create karein
+                // Note: Yahan agar aapke paas buyer (customer) ki details hain (req.body se), 
+                // toh unko yahan pass kar sakte hain. Abhi ke liye hum dummy/default bhej rahe hain.
+                const salePayload = {
+                    vehicle: vehicle._id,
+                    // customer: req.body.customerId, // Agar frontend se customerId aa raha hai toh isko uncomment karein
+                    salesExecutive: req.user._id,
+                    vehicleSnapshot: {
+                        stockId: vehicle.stockId,
+                        brand: vehicle.brand,
+                        model: vehicle.model,
+                        variant: vehicle.variant,
+                        year: vehicle.year,
+                        fuelType: vehicle.fuelType,
+                        transmission: vehicle.transmission,
+                        color: vehicle.exteriorColour || "Unknown",
+                        registrationNumber: vehicle.registrationNumber,
+                        kilometersAtSale: vehicle.kilometers,
+                    },
+                    // Agar aapke paas buyer details req.body mein aa rahi hain, toh unko yahan map karein
+                    buyerSnapshot: {
+                        name: req.body.buyerName || "Unknown",
+                        phone: req.body.buyerPhone || "0000000000",
+                    },
+                    pricing: {
+                        originalPrice: vehicle.askingPrice,
+                        finalSalePrice: vehicle.soldPrice || vehicle.askingPrice, // Yahan final sold price dalni chahiye
+                        paymentStatus: "pending" // By default pending
+                    },
+                    saleDate: new Date(),
+                    createdBy: req.user._id
+                };
+
+                await Sale.create(salePayload);
+            }
+        }
 
         return ok(res, vehicle, `Vehicle marked as ${status}`);
     } catch (err) {
