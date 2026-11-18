@@ -23,12 +23,11 @@ const STAGE_RANK = {
     "Won": 10
 };
 
-
 export const publicCreateLead = async (req, res, next) => {
     try {
-        // 1. Extract Attribution & Location using Services
+        // 1. Extract Attribution & Location
         const attribution = extractAttribution(req);
-        const { ip, location } = captureLocation(req);  // getClientIp + resolveLocation combined
+        const { ip, location } = captureLocation(req);
 
         const {
             name, phone, email, city,
@@ -43,10 +42,11 @@ export const publicCreateLead = async (req, res, next) => {
         if (!mongoose.isValidObjectId(vehicleId)) return fail(res, "Invalid vehicle ID format", 400);
 
         // 3. Validate Vehicle
-        const vehicle = await Vehicle.findById(vehicleId);
+        // NOTE: Agar deleted vehicle ko bhi allow karna hai to .setOptions({ skipMiddleware: true }) use karein
+        const vehicle = await Vehicle.findOne({ _id: vehicleId, deletedAt: null }); 
         if (!vehicle) return fail(res, `Vehicle not found (id: ${vehicleId})`, 404);
 
-        // 4. Resolve / create customer — name-aware
+        // 4. Resolve / create customer
         let customer = await Customer.findOne({
             phone,
             name: new RegExp(`^${name.trim()}$`, "i"),
@@ -54,14 +54,16 @@ export const publicCreateLead = async (req, res, next) => {
 
         if (!customer) {
             customer = await Customer.create({
-                name, phone, email, city,
+                name, 
+                phone, 
+                email: email || null, 
+                city: city || null,
                 source: source || "direct_website",
                 attribution: attribution || {},
-                ipAddress: ip, // ✅ From service
-                ipLocation: location, // ✅ From service
+                ipAddress: ip,
+                ipLocation: location,
             });
         } else {
-            // ✅ Update customer's location/attribution if missing on re-enquiry
             let customerUpdated = false;
             if (!customer.ipLocation?.city && location?.city) {
                 customer.ipLocation = location;
@@ -74,7 +76,7 @@ export const publicCreateLead = async (req, res, next) => {
             if (customerUpdated) await customer.save();
         }
 
-        // 5. Resolve campaign
+        // 5. Resolve campaign (Safe check)
         let campaign = null;
         if (attribution?.utmCampaign) {
             campaign = await Campaign.findOne({ "utm.campaign": attribution.utmCampaign }).select("_id");
@@ -83,14 +85,19 @@ export const publicCreateLead = async (req, res, next) => {
             campaign = await Campaign.findById(campaignId).select("_id");
         }
 
-        // 6. Resolve brand
+        // 6. Resolve brand (FIXED LOGIC)
         let brandId = null;
-        if (vehicle.brand && mongoose.isValidObjectId(vehicle.brand)) {
-            brandId = vehicle.brand;
-        } else if (vehicle.brand || vehicleBrand) {
-            const brandName = vehicle.brand || vehicleBrand;
-            const brandDoc = await Brand.findOne({ name: new RegExp(`^${brandName.trim()}$`, "i") }).select("_id");
-            brandId = brandDoc?._id || null;
+        let brandNameToSearch = vehicle.brand || vehicleBrand; 
+        
+        if (brandNameToSearch) {
+            // Pehle check karo ki kya yeh valid ObjectId hai
+            if (mongoose.isValidObjectId(brandNameToSearch)) {
+                brandId = brandNameToSearch;
+            } else {
+                // Agar string hai (jaise "Lamborghini"), to database me search karo
+                const brandDoc = await Brand.findOne({ name: new RegExp(`^${brandNameToSearch.trim()}$`, "i") }).select("_id");
+                brandId = brandDoc?._id || null;
+            }
         }
 
         // 7. Handle Source Enum 
@@ -103,8 +110,9 @@ export const publicCreateLead = async (req, res, next) => {
         if (source && allowedLeadSources.includes(source)) {
             leadSource = source;
         } else if (attribution?.latestTouchSource) {
-            // ✅ Fallback to attribution-derived source if not sent explicitly
-            leadSource = attribution.latestTouchSource;
+            leadSource = allowedLeadSources.includes(attribution.latestTouchSource) 
+                ? attribution.latestTouchSource 
+                : "direct_website";
         }
 
         // 8. Handle Budget
@@ -120,20 +128,14 @@ export const publicCreateLead = async (req, res, next) => {
         }).sort({ createdAt: -1 });
 
         if (existingLead) {
-            // Update existing lead
             if (attribution) {
-                existingLead.attribution = {
-                    ...existingLead.attribution,
-                    ...attribution,
-                    latestTouchAt: new Date()
-                };
+                existingLead.attribution = { ...existingLead.attribution, ...attribution, latestTouchAt: new Date() };
             }
             if (campaign && !existingLead.campaign) existingLead.campaign = campaign._id;
             if (requirement) existingLead.requirement = requirement;
             if (notes) existingLead.notes = [existingLead.notes, notes].filter(Boolean).join("\n");
             if (finalBudget) existingLead.budget = finalBudget;
 
-            // ✅ Update location on existing lead
             if (location?.city || city) {
                 existingLead.location = {
                     country: location?.country || existingLead.location?.country || null,
@@ -169,17 +171,16 @@ export const publicCreateLead = async (req, res, next) => {
             campaign: campaign?._id || null,
             enquiryType: leadType || "Purchase",
             source: leadSource,
-            requirement,
+            requirement: requirement || null,
             interestedVehicle: vehicleModel || vehicle.model || "Unknown",
             brand: brandId,
             budget: finalBudget,
-            notes,
+            notes: notes || null,
             attribution: {
                 ...(attribution || {}),
                 firstTouchAt: new Date(),
                 latestTouchAt: new Date(),
             },
-            // ✅ Location Priority: Form City > IP Location > Customer's saved location
             location: {
                 country: location?.country || customer.ipLocation?.country || null,
                 state: location?.state || customer.ipLocation?.state || null,
@@ -213,6 +214,195 @@ export const publicCreateLead = async (req, res, next) => {
         next(err);
     }
 };
+// export const publicCreateLead = async (req, res, next) => {
+//     try {
+//         // 1. Extract Attribution & Location using Services
+//         const attribution = extractAttribution(req);
+//         const { ip, location } = captureLocation(req);  // getClientIp + resolveLocation combined
+
+//         const {
+//             name, phone, email, city,
+//             vehicle: vehicleId,
+//             vehicleBrand, vehicleModel, source, leadType,
+//             requirement, budgetMin, budgetMax, notes, campaignId,
+//         } = req.body;
+
+//         // 2. Validate required fields
+//         if (!name || !phone) return fail(res, "Name and phone are required", 400);
+//         if (!vehicleId) return fail(res, "Vehicle ID is required", 400);
+//         if (!mongoose.isValidObjectId(vehicleId)) return fail(res, "Invalid vehicle ID format", 400);
+
+//         // 3. Validate Vehicle
+//         const vehicle = await Vehicle.findById(vehicleId);
+//         if (!vehicle) return fail(res, `Vehicle not found (id: ${vehicleId})`, 404);
+
+//         // 4. Resolve / create customer — name-aware
+//         let customer = await Customer.findOne({
+//             phone,
+//             name: new RegExp(`^${name.trim()}$`, "i"),
+//         });
+
+//         if (!customer) {
+//             customer = await Customer.create({
+//                 name, phone, email, city,
+//                 source: source || "direct_website",
+//                 attribution: attribution || {},
+//                 ipAddress: ip, // ✅ From service
+//                 ipLocation: location, // ✅ From service
+//             });
+//         } else {
+//             // ✅ Update customer's location/attribution if missing on re-enquiry
+//             let customerUpdated = false;
+//             if (!customer.ipLocation?.city && location?.city) {
+//                 customer.ipLocation = location;
+//                 customerUpdated = true;
+//             }
+//             if (ip && customer.ipAddress !== ip) {
+//                 customer.ipAddress = ip;
+//                 customerUpdated = true;
+//             }
+//             if (customerUpdated) await customer.save();
+//         }
+
+//         // 5. Resolve campaign
+//         let campaign = null;
+//         if (attribution?.utmCampaign) {
+//             campaign = await Campaign.findOne({ "utm.campaign": attribution.utmCampaign }).select("_id");
+//         }
+//         if (!campaign && campaignId && mongoose.isValidObjectId(campaignId)) {
+//             campaign = await Campaign.findById(campaignId).select("_id");
+//         }
+
+//         // 6. Resolve brand
+//         let brandId = null;
+//         if (vehicle.brand && mongoose.isValidObjectId(vehicle.brand)) {
+//             brandId = vehicle.brand;
+//         } else if (vehicle.brand || vehicleBrand) {
+//             const brandName = vehicle.brand || vehicleBrand;
+//             const brandDoc = await Brand.findOne({ name: new RegExp(`^${brandName.trim()}$`, "i") }).select("_id");
+//             brandId = brandDoc?._id || null;
+//         }
+
+//         // 7. Handle Source Enum 
+//         const allowedLeadSources = [
+//             "google_ads", "facebook_ads", "instagram", "organic",
+//             "direct_website", "whatsapp", "phone", "walk_in",
+//             "referral", "manual", "other",
+//         ];
+//         let leadSource = "direct_website";
+//         if (source && allowedLeadSources.includes(source)) {
+//             leadSource = source;
+//         } else if (attribution?.latestTouchSource) {
+//             // ✅ Fallback to attribution-derived source if not sent explicitly
+//             leadSource = attribution.latestTouchSource;
+//         }
+
+//         // 8. Handle Budget
+//         const finalBudget = budgetMax || budgetMin || null;
+
+//         // 9. Duplicate lead detection (within 30 days)
+//         const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+//         const existingLead = await Lead.findOne({
+//             customer: customer._id,
+//             vehicle: vehicle._id,
+//             createdAt: { $gte: since },
+//             status: { $nin: ["Won", "Lost"] },
+//         }).sort({ createdAt: -1 });
+
+//         if (existingLead) {
+//             // Update existing lead
+//             if (attribution) {
+//                 existingLead.attribution = {
+//                     ...existingLead.attribution,
+//                     ...attribution,
+//                     latestTouchAt: new Date()
+//                 };
+//             }
+//             if (campaign && !existingLead.campaign) existingLead.campaign = campaign._id;
+//             if (requirement) existingLead.requirement = requirement;
+//             if (notes) existingLead.notes = [existingLead.notes, notes].filter(Boolean).join("\n");
+//             if (finalBudget) existingLead.budget = finalBudget;
+
+//             // ✅ Update location on existing lead
+//             if (location?.city || city) {
+//                 existingLead.location = {
+//                     country: location?.country || existingLead.location?.country || null,
+//                     state: location?.state || existingLead.location?.state || null,
+//                     city: city || location?.city || existingLead.location?.city || null,
+//                 };
+//                 existingLead.ipAddress = ip || existingLead.ipAddress;
+//             }
+
+//             await existingLead.save();
+
+//             await LeadActivity.create({
+//                 lead: existingLead._id, customer: customer._id,
+//                 type: "system", title: "Customer re-enquired",
+//                 description: "Duplicate enquiry captured and merged",
+//                 meta: { attribution: attribution || {}, vehicle: vehicle._id, campaign: campaign?._id || null },
+//             });
+
+//             await existingLead.populate([
+//                 { path: "customer", select: "name phone email city" },
+//                 { path: "vehicle", select: "brand model year price stockId" },
+//                 { path: "brand", select: "name" },
+//                 { path: "campaign", select: "name" }
+//             ]);
+
+//             return ok(res, { lead: existingLead, isDuplicate: true }, "Enquiry linked to existing lead", 200);
+//         }
+
+//         // 10. Create new lead
+//         const lead = await Lead.create({
+//             customer: customer._id,
+//             vehicle: vehicle._id,
+//             campaign: campaign?._id || null,
+//             enquiryType: leadType || "Purchase",
+//             source: leadSource,
+//             requirement,
+//             interestedVehicle: vehicleModel || vehicle.model || "Unknown",
+//             brand: brandId,
+//             budget: finalBudget,
+//             notes,
+//             attribution: {
+//                 ...(attribution || {}),
+//                 firstTouchAt: new Date(),
+//                 latestTouchAt: new Date(),
+//             },
+//             // ✅ Location Priority: Form City > IP Location > Customer's saved location
+//             location: {
+//                 country: location?.country || customer.ipLocation?.country || null,
+//                 state: location?.state || customer.ipLocation?.state || null,
+//                 city: city || location?.city || customer.ipLocation?.city || customer.city || null,
+//             },
+//             ipAddress: ip,
+//             createdBy: null, updatedBy: null,
+//         });
+
+//         // 11. Populate response
+//         await lead.populate([
+//             { path: "customer", select: "name phone email city" },
+//             { path: "vehicle", select: "brand model year price stockId" },
+//             { path: "brand", select: "name" },
+//             { path: "campaign", select: "name" }
+//         ]);
+
+//         // 12. Log activity
+//         await LeadActivity.create({
+//             lead: lead._id, customer: customer._id,
+//             type: "system", title: "Lead created",
+//             description: `Lead created from ${lead.source}`,
+//             meta: { source: lead.source, campaign: campaign?._id || null, utmCampaign: attribution?.utmCampaign || null },
+//         });
+
+//         // 13. Success response
+//         return ok(res, { lead, isDuplicate: false, campaignMatched: !!campaign }, "Enquiry submitted successfully", 201);
+
+//     } catch (err) {
+//         console.error("Error in publicCreateLead:", err);
+//         next(err);
+//     }
+// };
 
 
 export const listLeads = async (req, res, next) => {
