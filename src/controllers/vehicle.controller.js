@@ -213,6 +213,30 @@ export const toggleVehicleFeatured = async (req, res, next) => {
 /* ============================================================
    PUBLIC — GET /api/v1/vehicles/:slugOrId
    ============================================================ */
+// export const getVehicle = async (req, res, next) => {
+//     try {
+//         const { slugOrId } = req.params;
+//         const query = mongoose.isValidObjectId(slugOrId)
+//             ? { _id: slugOrId }
+//             : { slug: slugOrId };
+
+//         const vehicle = await Vehicle.findOne(query)
+//             .populate("brandRef", "name logo slug website country")
+//             .populate("categoryRef", "name slug description")
+//             .populate("soldTo", "name phone city")
+//             .populate("saleExecutive", "name");
+
+//         if (!vehicle) return fail(res, "Vehicle not found", 404);
+
+//         await Vehicle.updateOne({ _id: vehicle._id }, { $inc: { views: 1 } });
+
+//         return ok(res, vehicle);
+//     } catch (err) {
+//         next(err);
+//     }
+// };
+
+
 export const getVehicle = async (req, res, next) => {
     try {
         const { slugOrId } = req.params;
@@ -224,7 +248,8 @@ export const getVehicle = async (req, res, next) => {
             .populate("brandRef", "name logo slug website country")
             .populate("categoryRef", "name slug description")
             .populate("soldTo", "name phone city")
-            .populate("saleExecutive", "name");
+            .populate("saleExecutive", "name")
+            .populate("rcVerifiedBy", "name email"); // <--- Yahan add kiya gaya hai
 
         if (!vehicle) return fail(res, "Vehicle not found", 404);
 
@@ -235,7 +260,6 @@ export const getVehicle = async (req, res, next) => {
         next(err);
     }
 };
-
 /* ============================================================
    PUBLIC — GET /api/v1/vehicles/:id/similar
    ============================================================ */
