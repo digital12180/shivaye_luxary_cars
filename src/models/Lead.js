@@ -178,12 +178,12 @@ leadSchema.index({ status: 1, nextFollowUpAt: 1 });
 leadSchema.index({ source: 1, createdAt: -1 });
 leadSchema.index({ enquiryType: 1, status: 1 });
 leadSchema.index({ customer: 1, status: 1 });
-
+// Lead.js model mein pre-save hook ke andar
 leadSchema.pre("save", async function () {
     if (!this.leadNumber) {
-        const count = await mongoose.model("Lead").countDocuments();
-        this.leadNumber = `LD-${String(count + 1).padStart(5, "0")}`;
+        this.leadNumber = `LEAD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     }
+    // next();
 });
 
 leadSchema.pre("save", function () {
