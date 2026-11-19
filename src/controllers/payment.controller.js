@@ -478,7 +478,7 @@ export const verifyPayment = async (req, res, next) => {
     if (reservation.lead) {
       await Lead.findByIdAndUpdate(
         reservation.lead,
-        { status: "Booked" },
+        { status: "Reserved" },
         { session }
       );
       await LeadActivity.create([{
