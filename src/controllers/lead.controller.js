@@ -9,6 +9,8 @@ import { notifyLeadAssigned } from "../services/notification.service.js";
 import { extractAttribution } from "../services/attribution.service.js";
 import { captureLocation } from "../services/geolocation.service.js";
 import Brand from "../models/Brand.js"
+import Reservation from "../models/Reservation.js";
+
 
 const STAGE_RANK = {
     "New": 1,
@@ -916,8 +918,6 @@ export const updateLeadStatus = async (req, res, next) => {
                 }
             } catch (saleErr) {
                 console.error("Sale creation on Won failed:", saleErr);
-                // Lead already Won hai — sale failure ko swallow kar rahe hain.
-                // Agar chaho to yahan fail(res, ...) return kar sakte ho.
             }
         }
 
