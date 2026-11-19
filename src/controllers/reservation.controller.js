@@ -312,7 +312,7 @@ export const publicCreateReservation = async (req, res, next) => {
                 customer: customer._id,
                 vehicle: vehicle._id,
                 interestedVehicle: `${vehicle.brand || ""} ${vehicle.model || ""}`.trim() || "Vehicle",
-                brand: vehicle.brand || null,
+                brand: vehicle.brandRef || null,
                 enquiryType: "Purchase",
                 source: safeSource,
                 status: "Reserved",

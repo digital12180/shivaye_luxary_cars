@@ -43,7 +43,7 @@ export const publicCreateLead = async (req, res, next) => {
 
         // 3. Validate Vehicle
         // NOTE: Agar deleted vehicle ko bhi allow karna hai to .setOptions({ skipMiddleware: true }) use karein
-        const vehicle = await Vehicle.findOne({ _id: vehicleId, deletedAt: null }); 
+        const vehicle = await Vehicle.findOne({ _id: vehicleId, deletedAt: null });
         if (!vehicle) return fail(res, `Vehicle not found (id: ${vehicleId})`, 404);
 
         // 4. Resolve / create customer
@@ -54,9 +54,9 @@ export const publicCreateLead = async (req, res, next) => {
 
         if (!customer) {
             customer = await Customer.create({
-                name, 
-                phone, 
-                email: email || null, 
+                name,
+                phone,
+                email: email || null,
                 city: city || null,
                 source: source || "direct_website",
                 attribution: attribution || {},
@@ -87,8 +87,8 @@ export const publicCreateLead = async (req, res, next) => {
 
         // 6. Resolve brand (FIXED LOGIC)
         let brandId = null;
-        let brandNameToSearch = vehicle.brand || vehicleBrand; 
-        
+        let brandNameToSearch = vehicle.brand || vehicleBrand;
+
         if (brandNameToSearch) {
             // Pehle check karo ki kya yeh valid ObjectId hai
             if (mongoose.isValidObjectId(brandNameToSearch)) {
@@ -110,8 +110,8 @@ export const publicCreateLead = async (req, res, next) => {
         if (source && allowedLeadSources.includes(source)) {
             leadSource = source;
         } else if (attribution?.latestTouchSource) {
-            leadSource = allowedLeadSources.includes(attribution.latestTouchSource) 
-                ? attribution.latestTouchSource 
+            leadSource = allowedLeadSources.includes(attribution.latestTouchSource)
+                ? attribution.latestTouchSource
                 : "direct_website";
         }
 
@@ -707,6 +707,84 @@ export const updateLead = async (req, res, next) => {
     }
 }
 
+// export const updateLeadStatus = async (req, res, next) => {
+//     try {
+//         const { status, note, lostReason, lostReasonCategory } = req.body;
+
+//         // 1. Validate status is allowed (Matches Mongoose Enum)
+//         const allowed = Object.keys(STAGE_RANK).concat(["Lost"]);
+//         if (!allowed.includes(status)) {
+//             return fail(res, "Invalid status", 400);
+//         }
+
+//         const lead = await Lead.findById(req.params.id);
+//         if (!lead) return fail(res, "Lead not found", 404);
+
+//         // Authorization check
+//         if (
+//             req.user.role === "sales_executive" &&
+//             String(lead.assignedTo) !== String(req.user._id)
+//         ) {
+//             return fail(res, "Not authorized", 403);
+//         }
+
+//         // 2. Forward-only Guard logic
+//         // Rule: Once Won, no further stage changes.
+//         if (lead.status === "Won" && status !== "Won") {
+//             return fail(res, "Cannot change status of a Won lead", 400);
+//         }
+
+//         // Rule: Cannot move backwards UNLESS current status is 'Lost' (allowing re-entry into pipeline)
+//         if (lead.status !== "Lost" && status !== "Lost" && status !== "Won") {
+//             const currentRank = STAGE_RANK[lead.status] ?? -1;
+//             const newRank = STAGE_RANK[status] ?? -1;
+
+//             if (newRank < currentRank) {
+//                 return fail(
+//                     res,
+//                     `Cannot move lead backward from "${lead.status}" to "${status}"`,
+//                     400
+//                 );
+//             }
+//         }
+
+//         // Prevent setting status to the exact same stage
+//         if (lead.status === status) {
+//             return ok(res, lead, `Lead is already in ${status} stage`);
+//         }
+
+//         // 3. Save the OLD status before updating
+//         const previousStatus = lead.status;
+
+//         // 4. Apply the changes
+//         lead.status = status;
+//         lead.updatedBy = req.user._id;
+
+//         // Handle Lost Reason Logic
+//         if (status === "Lost") {
+//             lead.lostReason = lostReason || lead.lostReason;
+//             lead.lostReasonCategory = lostReasonCategory || lead.lostReasonCategory;
+//         }
+
+//         // FIXED: Reset lost reason if the lead moves out of Lost stage
+//         // Hum previousStatus check kar rahe hain, kyunki lead.status ab naya ban chuka hai
+//         if (previousStatus === "Lost" && status !== "Lost") {
+//             lead.lostReason = null;
+//             lead.lostReasonCategory = null;
+//         }
+
+//         // Note: Aapke model ke pre('save') hook mein stageHistory automatic handle ho rahi hai.
+//         // Agar aap 'note' ko history mein save karna chahte hain, toh model mein hook update karein.
+
+//         await lead.save();
+//         return ok(res, lead, `Lead marked as ${status}`);
+//     } catch (err) {
+//         next(err);
+//     }
+// };
+
+// PATCH /api/v1/leads/:id/assign
+
 export const updateLeadStatus = async (req, res, next) => {
     try {
         const { status, note, lostReason, lostReasonCategory } = req.body;
@@ -766,24 +844,89 @@ export const updateLeadStatus = async (req, res, next) => {
             lead.lostReasonCategory = lostReasonCategory || lead.lostReasonCategory;
         }
 
-        // FIXED: Reset lost reason if the lead moves out of Lost stage
-        // Hum previousStatus check kar rahe hain, kyunki lead.status ab naya ban chuka hai
+        // Reset lost reason if the lead moves out of Lost stage
         if (previousStatus === "Lost" && status !== "Lost") {
             lead.lostReason = null;
             lead.lostReasonCategory = null;
         }
 
-        // Note: Aapke model ke pre('save') hook mein stageHistory automatic handle ho rahi hai.
-        // Agar aap 'note' ko history mein save karna chahte hain, toh model mein hook update karein.
-
         await lead.save();
+
+        /* ============================================================
+           ✅ NEW: When lead becomes "Won" → mark vehicle Sold + create Sale
+           ============================================================ */
+        if (status === "Won" && lead.vehicle) {
+            try {
+                // a) Vehicle ko Sold mark karo
+                const vehicle = await Vehicle.findByIdAndUpdate(
+                    lead.vehicle,
+                    { status: "Sold", soldAt: new Date(), updatedBy: req.user._id },
+                    { new: true }
+                );
+
+                if (vehicle) {
+                    // b) Sale entry create karo (agar pehle se nahi hai)
+                    const existingSale = await Sale.findOne({ vehicle: vehicle._id });
+                    if (!existingSale) {
+                        // Lead se linked reservation (agar koi hai) nikaal lo
+                        const reservation = await Reservation.findOne({
+                            lead: lead._id,
+                            status: "Active",
+                        }).sort("-createdAt");
+
+                        await Sale.create({
+                            vehicle: vehicle._id,
+                            customer: lead.customer,
+                            reservation: reservation?._id || null,
+                            salesExecutive: req.user._id,
+                            vehicleSnapshot: {
+                                stockId: vehicle.stockId,
+                                brand: vehicle.brand,
+                                model: vehicle.model,
+                                variant: vehicle.variant,
+                                year: vehicle.year,
+                                fuelType: vehicle.fuelType,
+                                transmission: vehicle.transmission,
+                                color: vehicle.exteriorColour || "Unknown",
+                                registrationNumber: vehicle.registrationNumber,
+                                kilometersAtSale: vehicle.kilometers,
+                            },
+                            buyerSnapshot: {
+                                name: req.body.buyerName || null,
+                                phone: req.body.buyerPhone || null,
+                            },
+                            pricing: {
+                                originalPrice: vehicle.askingPrice,
+                                finalSalePrice:
+                                    req.body.finalSalePrice ||
+                                    vehicle.soldPrice ||
+                                    vehicle.askingPrice,
+                                paymentStatus: "pending",
+                            },
+                            saleDate: new Date(),
+                            createdBy: req.user._id,
+                        });
+                    }
+
+                    // c) Reservation ko bhi complete mark kar sakte ho (optional)
+                    if (reservation) {
+                        reservation.status = "Completed";
+                        await reservation.save();
+                    }
+                }
+            } catch (saleErr) {
+                console.error("Sale creation on Won failed:", saleErr);
+                // Lead already Won hai — sale failure ko swallow kar rahe hain.
+                // Agar chaho to yahan fail(res, ...) return kar sakte ho.
+            }
+        }
+
         return ok(res, lead, `Lead marked as ${status}`);
     } catch (err) {
         next(err);
     }
 };
 
-// PATCH /api/v1/leads/:id/assign
 export const assignLead = async (req, res, next) => {
     try {
         const { assignedTo } = req.body;
