@@ -10,6 +10,7 @@ import { extractAttribution } from "../services/attribution.service.js";
 import { captureLocation } from "../services/geolocation.service.js";
 import Brand from "../models/Brand.js"
 import Reservation from "../models/Reservation.js";
+import Sale from "../models/Sale.js"
 
 
 const STAGE_RANK = {
@@ -866,12 +867,17 @@ export const updateLeadStatus = async (req, res, next) => {
                     { new: true }
                 );
 
+                const customer = await Customer.findById(lead.customer);
+                if (!customer) {
+                    return fail(res, "Customer not found for the lead", 404);
+                }
                 if (vehicle) {
                     // b) Sale entry create karo (agar pehle se nahi hai)
                     const existingSale = await Sale.findOne({ vehicle: vehicle._id });
+                    let reservation;
                     if (!existingSale) {
                         // Lead se linked reservation (agar koi hai) nikaal lo
-                        const reservation = await Reservation.findOne({
+                        reservation = await Reservation.findOne({
                             lead: lead._id,
                             status: "Active",
                         }).sort("-createdAt");
@@ -894,15 +900,14 @@ export const updateLeadStatus = async (req, res, next) => {
                                 kilometersAtSale: vehicle.kilometers,
                             },
                             buyerSnapshot: {
-                                name: req.body.buyerName || null,
-                                phone: req.body.buyerPhone || null,
+                                name: customer.name || null,
+                                phone: customer.phone || null,
                             },
                             pricing: {
                                 originalPrice: vehicle.askingPrice,
                                 finalSalePrice:
-                                    req.body.finalSalePrice ||
-                                    vehicle.soldPrice ||
-                                    vehicle.askingPrice,
+                                    vehicle.askingPrice ||
+                                    vehicle.soldPrice,
                                 paymentStatus: "pending",
                             },
                             saleDate: new Date(),
