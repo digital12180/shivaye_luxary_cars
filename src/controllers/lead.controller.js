@@ -854,7 +854,17 @@ export const updateLeadStatus = async (req, res, next) => {
         }
 
         await lead.save();
-
+        if (status === "Booked" && lead.vehicle) {
+            try {
+                await Vehicle.findByIdAndUpdate(
+                    lead.vehicle,
+                    { status: "Booked", bookedAt: new Date(), updatedBy: req.user._id },
+                    { new: true }
+                );
+            } catch (bookErr) {
+                console.error("Vehicle Booked update failed:", bookErr);
+            }
+        }
         /* ============================================================
            ✅ NEW: When lead becomes "Won" → mark vehicle Sold + create Sale
            ============================================================ */
