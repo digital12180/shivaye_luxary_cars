@@ -19,44 +19,105 @@ const generateReservationNumber = () => {
     return `RS-${dateStr}-${randomStr}`;
 };
 
-export const expireStaleReservations = async () => {
-    const now = new Date();
+// export const expireStaleReservations = async () => {
+//     const now = new Date();
 
+//     const stale = await Reservation.find({
+//         status: "Active",                             // ✅ FIX
+//         paymentStatus: { $in: ["pending", "partial"] },
+//         expiresAt: { $lt: now },
+//     }).limit(50);
+
+//     let count = 0;
+//     for (const res of stale) {
+//         res.status = "Expired";                       // ✅ FIX
+//         res.cancelledAt = now;
+//         res.cancelledBy = "system";
+//         res.cancellationReason = "Hold period expired";
+//         res.cancellationCategory = "expired";
+//         await res.save();
+
+//         await Vehicle.findByIdAndUpdate(res.vehicle, {
+//             status: "Available",                        // ✅ FIX
+//             reservedAt: null,
+//         });
+
+//         if (res.lead) {
+//             await Lead.findByIdAndUpdate(res.lead, { status: "Negotiation" });  // ✅ FIX
+//             await LeadActivity.create({
+//                 lead: res.lead,
+//                 customer: res.customer,
+//                 type: "system",
+//                 title: "Reservation expired",
+//                 description: `Hold expired for reservation ${res.reservationNumber}`,
+//                 meta: { reservationId: res._id },
+//             });
+//         }
+//         count++;
+//     }
+
+//     return { expired: count };
+// };
+
+
+export const expireStaleReservations = async () => {
+  const now = new Date();
+  let totalExpired = 0;
+
+  while (true) {
     const stale = await Reservation.find({
-        status: "Active",                             // ✅ FIX
-        paymentStatus: { $in: ["pending", "partial"] },
-        expiresAt: { $lt: now },
+      status: "Active",
+      paymentStatus: { $in: ["pending", "partial"] }, // match schema casing!
+      expiresAt: { $lt: now },
     }).limit(50);
 
-    let count = 0;
+    if (!stale.length) break;
+
     for (const res of stale) {
-        res.status = "Expired";                       // ✅ FIX
-        res.cancelledAt = now;
-        res.cancelledBy = "system";
-        res.cancellationReason = "Hold period expired";
-        res.cancellationCategory = "expired";
-        await res.save();
+      // Race-safe expiry: only flip if still Active
+      const updated = await Reservation.findOneAndUpdate(
+        { _id: res._id, status: "Active" },
+        {
+          $set: {
+            status: "Expired",
+            cancelledAt: now,
+            cancelledBy: "system",
+            cancellationReason: "Hold period expired",
+            cancellationCategory: "expired",
+          },
+        },
+        { new: true }
+      );
 
-        await Vehicle.findByIdAndUpdate(res.vehicle, {
-            status: "Available",                        // ✅ FIX
-            reservedAt: null,
+      if (!updated) continue; // someone else changed it first
+
+      // Release vehicle only if still Reserved
+      await Vehicle.findOneAndUpdate(
+        { _id: res.vehicle, status: "Reserved" },
+        { $set: { status: "Available", reservedAt: null } }
+      );
+
+      if (res.lead) {
+        await Lead.findByIdAndUpdate(res.lead, { status: "Negotiation" });
+        await LeadActivity.create({
+          lead: res.lead,
+          customer: res.customer,
+          type: "system",
+          title: "Reservation expired",
+          description: `Hold expired for reservation ${res.reservationNumber}`,
+          meta: { reservationId: res._id },
         });
+      }
 
-        if (res.lead) {
-            await Lead.findByIdAndUpdate(res.lead, { status: "Negotiation" });  // ✅ FIX
-            await LeadActivity.create({
-                lead: res.lead,
-                customer: res.customer,
-                type: "system",
-                title: "Reservation expired",
-                description: `Hold expired for reservation ${res.reservationNumber}`,
-                meta: { reservationId: res._id },
-            });
-        }
-        count++;
+      totalExpired++;
     }
+  }
 
-    return { expired: count };
+  if (totalExpired) {
+    console.log(`[Cron] Expired ${totalExpired} stale reservation(s)`);
+  }
+
+  return { expired: totalExpired };
 };
 
 export const startReservationExpiryJob = () => {
