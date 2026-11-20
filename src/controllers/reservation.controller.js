@@ -534,97 +534,200 @@ export const createReservationManual = async (req, res, next) => {
 /* ============================================================
    CRM — List reservations
    ============================================================ */
+// export const listReservations = async (req, res, next) => {
+//     try {
+//         const page = Number(req.query.page) || 1;
+//         const limit = Number(req.query.limit) || 20;
+//         const {
+//             status, paymentCheck, assignedTo, customer, vehicle,
+//             fromDate, toDate, expiringSoon, search, sort,
+//         } = req.query;
+
+//         const filter = {};
+//         if (req.user.role === "sales_executive") {
+//             filter.assignedTo = req.user._id;
+//         } else if (assignedTo) {
+//             filter.assignedTo = assignedTo;
+//         }
+
+//         if (status) filter.status = status;
+//         if (paymentCheck) filter.paymentCheck = paymentCheck;
+//         if (customer) filter.customer = customer;
+//         if (vehicle) filter.vehicle = vehicle;
+
+//         if (fromDate || toDate) {
+//             filter.reservationDate = {};
+//             if (fromDate) filter.reservationDate.$gte = new Date(fromDate);
+//             if (toDate) filter.reservationDate.$lte = new Date(toDate);
+//         }
+
+//         if (expiringSoon === "true") {
+//             const in24h = new Date(Date.now() + 24 * 60 * 60 * 1000);
+//             filter.expiresAt = { $lte: in24h, $gte: new Date() };
+//             filter.status = "Active";   // <-- status overwrite
+//         }
+
+//         if (search) {
+//             filter.$or = [
+//                 { reservationNumber: new RegExp(search, "i") },
+//                 { customerName: new RegExp(search, "i") },
+//                 { vehicleName: new RegExp(search, "i") },
+//                 { transactionReference: new RegExp(search, "i") },
+//             ];
+//         }
+
+//         let sortOptions = { createdAt: -1 };
+//         if (sort === "recent") sortOptions = { createdAt: -1 };
+//         else if (sort === "deposit_low_high") sortOptions = { reservationAmount: 1 };
+//         else if (sort === "deposit_high_low") sortOptions = { reservationAmount: -1 };
+
+//         // ✅ Counts filter — status hata do (query param ho ya expiringSoon se set)
+//         const countsFilter = { ...filter };
+//         delete countsFilter.status;
+
+//         const STATUSES = [
+//             "Active", "Converted", "Cancelled", "Expired",
+//             "Completed", "Confirmed", "Refunded",
+//         ];
+
+//         const [data, total, statusAgg] = await Promise.all([
+//             Reservation.find(filter)
+//                 .populate("customer", "name phone email city")
+//                 .populate("vehicle", "stockId brand model year askingPrice images slug status")
+//                 .populate("assignedTo", "name email role")
+//                 .sort(sortOptions)
+//                 .skip((page - 1) * limit)
+//                 .limit(limit),
+//             Reservation.countDocuments(filter),
+//             Reservation.aggregate([
+//                 { $match: countsFilter },
+//                 { $group: { _id: "$status", count: { $sum: 1 } } },
+//             ]),
+//         ]);
+
+//         // ✅ Zero-fill counts
+//         const counts = STATUSES.reduce((acc, s) => {
+//             acc[s] = 0;
+//             return acc;
+//         }, {});
+
+//         statusAgg.forEach(({ _id, count }) => {
+//             if (_id) counts[_id] = count;
+//         });
+
+//         return ok(res, {
+//             data,
+//             pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+//             counts,
+//         });
+//     } catch (err) {
+//         next(err);
+//     }
+// };
+
+
 export const listReservations = async (req, res, next) => {
-    try {
-        const page = Number(req.query.page) || 1;
-        const limit = Number(req.query.limit) || 20;
-        const {
-            status, paymentCheck, assignedTo, customer, vehicle,
-            fromDate, toDate, expiringSoon, search, sort,
-        } = req.query;
+  try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const {
+      status, paymentCheck, paymentStatus, assignedTo, customer, vehicle,
+      fromDate, toDate, expiringSoon, search, sort,
+    } = req.query;
 
-        const filter = {};
-        if (req.user.role === "sales_executive") {
-            filter.assignedTo = req.user._id;
-        } else if (assignedTo) {
-            filter.assignedTo = assignedTo;
-        }
+    const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-        if (status) filter.status = status;
-        if (paymentCheck) filter.paymentCheck = paymentCheck;
-        if (customer) filter.customer = customer;
-        if (vehicle) filter.vehicle = vehicle;
+    const filter = {};
 
-        if (fromDate || toDate) {
-            filter.reservationDate = {};
-            if (fromDate) filter.reservationDate.$gte = new Date(fromDate);
-            if (toDate) filter.reservationDate.$lte = new Date(toDate);
-        }
-
-        if (expiringSoon === "true") {
-            const in24h = new Date(Date.now() + 24 * 60 * 60 * 1000);
-            filter.expiresAt = { $lte: in24h, $gte: new Date() };
-            filter.status = "Active";   // <-- status overwrite
-        }
-
-        if (search) {
-            filter.$or = [
-                { reservationNumber: new RegExp(search, "i") },
-                { customerName: new RegExp(search, "i") },
-                { vehicleName: new RegExp(search, "i") },
-                { transactionReference: new RegExp(search, "i") },
-            ];
-        }
-
-        let sortOptions = { createdAt: -1 };
-        if (sort === "recent") sortOptions = { createdAt: -1 };
-        else if (sort === "deposit_low_high") sortOptions = { reservationAmount: 1 };
-        else if (sort === "deposit_high_low") sortOptions = { reservationAmount: -1 };
-
-        // ✅ Counts filter — status hata do (query param ho ya expiringSoon se set)
-        const countsFilter = { ...filter };
-        delete countsFilter.status;
-
-        const STATUSES = [
-            "Active", "Converted", "Cancelled", "Expired",
-            "Completed", "Confirmed", "Refunded",
-        ];
-
-        const [data, total, statusAgg] = await Promise.all([
-            Reservation.find(filter)
-                .populate("customer", "name phone email city")
-                .populate("vehicle", "stockId brand model year askingPrice images slug status")
-                .populate("assignedTo", "name email role")
-                .sort(sortOptions)
-                .skip((page - 1) * limit)
-                .limit(limit),
-            Reservation.countDocuments(filter),
-            Reservation.aggregate([
-                { $match: countsFilter },
-                { $group: { _id: "$status", count: { $sum: 1 } } },
-            ]),
-        ]);
-
-        // ✅ Zero-fill counts
-        const counts = STATUSES.reduce((acc, s) => {
-            acc[s] = 0;
-            return acc;
-        }, {});
-
-        statusAgg.forEach(({ _id, count }) => {
-            if (_id) counts[_id] = count;
-        });
-
-        return ok(res, {
-            data,
-            pagination: { total, page, limit, pages: Math.ceil(total / limit) },
-            counts,
-        });
-    } catch (err) {
-        next(err);
+    if (req.user.role === "sales_executive") {
+      filter.assignedTo = req.user._id;
+    } else if (assignedTo) {
+      filter.assignedTo = assignedTo;
     }
-};
 
+    if (status) filter.status = status;
+    if (paymentCheck) filter.paymentCheck = paymentCheck;
+    if (paymentStatus) filter.paymentStatus = paymentStatus;   // ✅ FIX 1
+    if (customer) filter.customer = customer;
+    if (vehicle) filter.vehicle = vehicle;
+
+    if (fromDate || toDate) {
+      filter.reservationDate = {};
+      if (fromDate) filter.reservationDate.$gte = new Date(fromDate);
+      if (toDate) {
+        const end = new Date(toDate);
+        end.setUTCHours(23, 59, 59, 999);                       // ✅ FIX 5
+        filter.reservationDate.$lte = end;
+      }
+    }
+
+    if (expiringSoon === "true") {
+      const in24h = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      filter.expiresAt = { $lte: in24h, $gte: new Date() };
+      if (!filter.status) filter.status = "Active";              // ✅ FIX 2
+    }
+
+    if (search) {
+      const re = new RegExp(escapeRegex(search), "i");           // ✅ FIX 3
+      filter.$or = [
+        { reservationNumber: re },
+        { customerName: re },
+        { vehicleName: re },
+        { transactionReference: re },
+      ];
+    }
+
+    const SORT_MAP = {                                          // ✅ FIX 7
+      recent: { createdAt: -1 },
+      deposit_low_high: { reservationAmount: 1 },
+      deposit_high_low: { reservationAmount: -1 },
+      expiry_soon: { expiresAt: 1 },
+    };
+    const sortOptions = SORT_MAP[sort] || { createdAt: -1 };
+
+    // Counts: status filter only, keep the rest (search, dates, paymentStatus)
+    const countsFilter = { ...filter };
+    delete countsFilter.status;
+    delete countsFilter.expiresAt;                               // ✅ FIX 4
+
+    const STATUSES = [
+      "Active", "Converted", "Cancelled", "Expired",
+      "Completed", "Confirmed", "Refunded",
+    ];
+
+    const [data, total, statusAgg] = await Promise.all([
+      Reservation.find(filter)
+        .populate("customer", "name phone email city")
+        .populate("vehicle", "stockId brand model year askingPrice images slug status")
+        .populate("assignedTo", "name email role")
+        .sort(sortOptions)
+        .skip((page - 1) * limit)
+        .limit(limit),
+      Reservation.countDocuments(filter),
+      Reservation.aggregate([
+        { $match: countsFilter },
+        { $group: { _id: "$status", count: { $sum: 1 } } },
+      ]),
+    ]);
+
+    const counts = STATUSES.reduce((acc, s) => {
+      acc[s] = 0;
+      return acc;
+    }, {});
+
+    statusAgg.forEach(({ _id, count }) => {
+      if (_id) counts[_id] = count;
+    });
+
+    return ok(res, {
+      data,
+      pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+      counts,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
 /* ============================================================
    CRM — Get single reservation (unchanged)
    ============================================================ */
