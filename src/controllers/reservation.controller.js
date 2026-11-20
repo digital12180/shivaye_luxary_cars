@@ -661,13 +661,13 @@ export const confirmReservation = async (req, res, next) => {
         if (["Cancelled", "Expired", "Refunded", "Completed"].includes(reservation.status))
             return fail(res, `Cannot confirm a ${reservation.status} reservation`, 400);
 
-        const paidPayment = await Payment.findOne({
-            reservation: reservation._id,
-            status: "paid",
-        });
-        if (!paidPayment) {
-            return fail(res, "Cannot confirm — no successful payment found on this reservation", 400);
-        }
+        // const paidPayment = await Payment.findOne({
+        //     reservation: reservation._id,
+        //     status: "paid",
+        // });
+        // if (!paidPayment) {
+        //     return fail(res, "Cannot confirm — no successful payment found on this reservation", 400);
+        // }
 
         if ((reservation.amountPaid || 0) <= 0) {
             return fail(res, "Cannot confirm — no amount paid yet", 400);
