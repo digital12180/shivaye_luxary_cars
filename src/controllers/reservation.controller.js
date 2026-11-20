@@ -675,8 +675,8 @@ export const confirmReservation = async (req, res, next) => {
 
         reservation.status = "Confirmed";       // ✅ FIX: capital C
         reservation.confirmedAt = new Date();
-        reservation.paymentStatus =
-            reservation.amountPaid >= reservation.reservationAmount ? "paid" : "partial";
+        // reservation.paymentStatus =
+        //     reservation.amountPaid >= reservation.reservationAmount ? "paid" : "partial";
         reservation.updatedBy = req.user._id;
         await reservation.save();
 
