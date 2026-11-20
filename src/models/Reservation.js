@@ -193,6 +193,13 @@ const reservationSchema = new mongoose.Schema(
 // reservationSchema.index({ vehicle: 1, status: 1 });
 // reservationSchema.index({ createdAt: -1 });
 
+/* ============ Validity: enforce 3-day TTL ============ */
+reservationSchema.pre("save", function () {
+    if (this.isNew && !this.expiresAt) {
+        const base = this.reservationDate || this.createdAt || new Date();
+        this.expiresAt = new Date(base.getTime() + 3 * 24 * 60 * 60 * 1000);
+    }
+});
 /* Soft delete */
 reservationSchema.pre(/^find/, function () {
     this.where({ deletedAt: null });
