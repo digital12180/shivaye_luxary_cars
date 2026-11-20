@@ -61,63 +61,63 @@ const generateReservationNumber = () => {
 
 
 export const expireStaleReservations = async () => {
-  const now = new Date();
-  let totalExpired = 0;
+    const now = new Date();
+    let totalExpired = 0;
 
-  while (true) {
-    const stale = await Reservation.find({
-      status: "Active",
-      paymentStatus: { $in: ["pending", "partial"] }, // match schema casing!
-      expiresAt: { $lt: now },
-    }).limit(50);
+    while (true) {
+        const stale = await Reservation.find({
+            status: "Active",
+            paymentStatus: { $in: ["pending", "partial"] }, // match schema casing!
+            expiresAt: { $lt: now },
+        }).limit(50);
 
-    if (!stale.length) break;
+        if (!stale.length) break;
 
-    for (const res of stale) {
-      // Race-safe expiry: only flip if still Active
-      const updated = await Reservation.findOneAndUpdate(
-        { _id: res._id, status: "Active" },
-        {
-          $set: {
-            status: "Expired",
-            cancelledAt: now,
-            cancelledBy: "system",
-            cancellationReason: "Hold period expired",
-            cancellationCategory: "expired",
-          },
-        },
-        { new: true }
-      );
+        for (const res of stale) {
+            // Race-safe expiry: only flip if still Active
+            const updated = await Reservation.findOneAndUpdate(
+                { _id: res._id, status: "Active" },
+                {
+                    $set: {
+                        status: "Expired",
+                        cancelledAt: now,
+                        cancelledBy: "system",
+                        cancellationReason: "Hold period expired",
+                        cancellationCategory: "expired",
+                    },
+                },
+                { new: true }
+            );
 
-      if (!updated) continue; // someone else changed it first
+            if (!updated) continue; // someone else changed it first
 
-      // Release vehicle only if still Reserved
-      await Vehicle.findOneAndUpdate(
-        { _id: res.vehicle, status: "Reserved" },
-        { $set: { status: "Available", reservedAt: null } }
-      );
+            // Release vehicle only if still Reserved
+            await Vehicle.findOneAndUpdate(
+                { _id: res.vehicle, status: "Reserved" },
+                { $set: { status: "Available", reservedAt: null } }
+            );
 
-      if (res.lead) {
-        await Lead.findByIdAndUpdate(res.lead, { status: "Negotiation" });
-        await LeadActivity.create({
-          lead: res.lead,
-          customer: res.customer,
-          type: "system",
-          title: "Reservation expired",
-          description: `Hold expired for reservation ${res.reservationNumber}`,
-          meta: { reservationId: res._id },
-        });
-      }
+            if (res.lead) {
+                await Lead.findByIdAndUpdate(res.lead, { status: "Negotiation" });
+                await LeadActivity.create({
+                    lead: res.lead,
+                    customer: res.customer,
+                    type: "system",
+                    title: "Reservation expired",
+                    description: `Hold expired for reservation ${res.reservationNumber}`,
+                    meta: { reservationId: res._id },
+                });
+            }
 
-      totalExpired++;
+            totalExpired++;
+        }
     }
-  }
 
-  if (totalExpired) {
-    console.log(`[Cron] Expired ${totalExpired} stale reservation(s)`);
-  }
+    if (totalExpired) {
+        console.log(`[Cron] Expired ${totalExpired} stale reservation(s)`);
+    }
 
-  return { expired: totalExpired };
+    return { expired: totalExpired };
 };
 
 export const startReservationExpiryJob = () => {
@@ -627,106 +627,116 @@ export const createReservationManual = async (req, res, next) => {
 
 
 export const listReservations = async (req, res, next) => {
-  try {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 20;
-    const {
-      status, paymentCheck, paymentStatus, assignedTo, customer, vehicle,
-      fromDate, toDate, expiringSoon, search, sort,
-    } = req.query;
+    try {
+        const page = Number(req.query.page) || 1;
+        const limit = Number(req.query.limit) || 20;
+        const {
+            status, paymentCheck, paymentStatus, assignedTo, customer, vehicle,
+            fromDate, toDate, expiringSoon, search, sort,
+        } = req.query;
 
-    const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-    const filter = {};
+        const filter = {};
 
-    if (req.user.role === "sales_executive") {
-      filter.assignedTo = req.user._id;
-    } else if (assignedTo) {
-      filter.assignedTo = assignedTo;
+        if (req.user.role === "sales_executive") {
+            filter.assignedTo = req.user._id;
+        } else if (assignedTo) {
+            filter.assignedTo = assignedTo;
+        }
+
+        if (status) filter.status = status;
+        if (paymentCheck) filter.paymentCheck = paymentCheck;
+        if (paymentStatus) filter.paymentStatus = paymentStatus;   // ✅ FIX 1
+        if (customer) filter.customer = customer;
+        if (vehicle) filter.vehicle = vehicle;
+
+        if (fromDate || toDate) {
+            filter.reservationDate = {};
+            if (fromDate) filter.reservationDate.$gte = new Date(fromDate);
+            if (toDate) {
+                const end = new Date(toDate);
+                end.setUTCHours(23, 59, 59, 999);                       // ✅ FIX 5
+                filter.reservationDate.$lte = end;
+            }
+        }
+
+        if (expiringSoon === "true") {
+            const in24h = new Date(Date.now() + 24 * 60 * 60 * 1000);
+            filter.expiresAt = { $lte: in24h, $gte: new Date() };
+            if (!filter.status) filter.status = "Active";              // ✅ FIX 2
+        }
+
+        if (search) {
+            const term = String(search).trim();
+            if (term) {
+                const re = new RegExp(escapeRegex(term), "i");
+                filter.$or = [
+                    { reservationNumber: re },
+                    { customerName: re },
+                    { customerPhone: re },
+                    { vehicleName: re },
+                    { transactionReference: re },
+                    { "buyerSnapshot.name": re },
+                    { "buyerSnapshot.phone": re },
+                    { "buyerSnapshot.email": re },
+                    { "vehicleSnapshot.brand": re },
+                    { "vehicleSnapshot.model": re },
+                    { "vehicleSnapshot.stockId": re },
+                ];
+            }
+        }
+
+        const SORT_MAP = {                                          // ✅ FIX 7
+            recent: { createdAt: -1 },
+            deposit_low_high: { reservationAmount: 1 },
+            deposit_high_low: { reservationAmount: -1 },
+            expiry_soon: { expiresAt: 1 },
+        };
+        const sortOptions = SORT_MAP[sort] || { createdAt: -1 };
+
+        // Counts: status filter only, keep the rest (search, dates, paymentStatus)
+        const countsFilter = { ...filter };
+        delete countsFilter.status;
+        delete countsFilter.expiresAt;                               // ✅ FIX 4
+
+        const STATUSES = [
+            "Active", "Converted", "Cancelled", "Expired",
+            "Completed", "Confirmed", "Refunded",
+        ];
+
+        const [data, total, statusAgg] = await Promise.all([
+            Reservation.find(filter)
+                .populate("customer", "name phone email city")
+                .populate("vehicle", "stockId brand model year askingPrice images slug status")
+                .populate("assignedTo", "name email role")
+                .sort(sortOptions)
+                .skip((page - 1) * limit)
+                .limit(limit),
+            Reservation.countDocuments(filter),
+            Reservation.aggregate([
+                { $match: countsFilter },
+                { $group: { _id: "$status", count: { $sum: 1 } } },
+            ]),
+        ]);
+
+        const counts = STATUSES.reduce((acc, s) => {
+            acc[s] = 0;
+            return acc;
+        }, {});
+
+        statusAgg.forEach(({ _id, count }) => {
+            if (_id) counts[_id] = count;
+        });
+
+        return ok(res, {
+            data,
+            pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+            counts,
+        });
+    } catch (err) {
+        next(err);
     }
-
-    if (status) filter.status = status;
-    if (paymentCheck) filter.paymentCheck = paymentCheck;
-    if (paymentStatus) filter.paymentStatus = paymentStatus;   // ✅ FIX 1
-    if (customer) filter.customer = customer;
-    if (vehicle) filter.vehicle = vehicle;
-
-    if (fromDate || toDate) {
-      filter.reservationDate = {};
-      if (fromDate) filter.reservationDate.$gte = new Date(fromDate);
-      if (toDate) {
-        const end = new Date(toDate);
-        end.setUTCHours(23, 59, 59, 999);                       // ✅ FIX 5
-        filter.reservationDate.$lte = end;
-      }
-    }
-
-    if (expiringSoon === "true") {
-      const in24h = new Date(Date.now() + 24 * 60 * 60 * 1000);
-      filter.expiresAt = { $lte: in24h, $gte: new Date() };
-      if (!filter.status) filter.status = "Active";              // ✅ FIX 2
-    }
-
-    if (search) {
-      const re = new RegExp(escapeRegex(search), "i");           // ✅ FIX 3
-      filter.$or = [
-        { reservationNumber: re },
-        { customerName: re },
-        { vehicleName: re },
-        { transactionReference: re },
-      ];
-    }
-
-    const SORT_MAP = {                                          // ✅ FIX 7
-      recent: { createdAt: -1 },
-      deposit_low_high: { reservationAmount: 1 },
-      deposit_high_low: { reservationAmount: -1 },
-      expiry_soon: { expiresAt: 1 },
-    };
-    const sortOptions = SORT_MAP[sort] || { createdAt: -1 };
-
-    // Counts: status filter only, keep the rest (search, dates, paymentStatus)
-    const countsFilter = { ...filter };
-    delete countsFilter.status;
-    delete countsFilter.expiresAt;                               // ✅ FIX 4
-
-    const STATUSES = [
-      "Active", "Converted", "Cancelled", "Expired",
-      "Completed", "Confirmed", "Refunded",
-    ];
-
-    const [data, total, statusAgg] = await Promise.all([
-      Reservation.find(filter)
-        .populate("customer", "name phone email city")
-        .populate("vehicle", "stockId brand model year askingPrice images slug status")
-        .populate("assignedTo", "name email role")
-        .sort(sortOptions)
-        .skip((page - 1) * limit)
-        .limit(limit),
-      Reservation.countDocuments(filter),
-      Reservation.aggregate([
-        { $match: countsFilter },
-        { $group: { _id: "$status", count: { $sum: 1 } } },
-      ]),
-    ]);
-
-    const counts = STATUSES.reduce((acc, s) => {
-      acc[s] = 0;
-      return acc;
-    }, {});
-
-    statusAgg.forEach(({ _id, count }) => {
-      if (_id) counts[_id] = count;
-    });
-
-    return ok(res, {
-      data,
-      pagination: { total, page, limit, pages: Math.ceil(total / limit) },
-      counts,
-    });
-  } catch (err) {
-    next(err);
-  }
 };
 /* ============================================================
    CRM — Get single reservation (unchanged)
