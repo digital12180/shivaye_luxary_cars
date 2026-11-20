@@ -669,9 +669,9 @@ export const confirmReservation = async (req, res, next) => {
         //     return fail(res, "Cannot confirm — no successful payment found on this reservation", 400);
         // }
 
-        if ((reservation.amountPaid || 0) <= 0) {
-            return fail(res, "Cannot confirm — no amount paid yet", 400);
-        }
+        // if ((reservation.amountPaid || 0) <= 0) {
+        //     return fail(res, "Cannot confirm — no amount paid yet", 400);
+        // }
 
         reservation.status = "Confirmed";       // ✅ FIX: capital C
         reservation.confirmedAt = new Date();
